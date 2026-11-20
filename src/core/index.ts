@@ -179,9 +179,12 @@ export default class Fuse<T> {
         removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove)
       }
 
-      // Filter docs in a single pass instead of reverse-splicing
-      const toRemove = new Set(indicesToRemove)
-      this._docs = this._docs.filter((_, i) => !toRemove.has(i))
+      // Filter docs in a single pass; indicesToRemove is ascending, so a
+      // cursor into it replaces a Set lookup.
+      let j = 0
+      this._docs = this._docs.filter(
+        (_, i) => i !== indicesToRemove[j] || (j++, false)
+      )
       this._myIndex.removeAll(indicesToRemove)
 
       this._invalidateSearcherCache()

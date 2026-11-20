@@ -142,22 +142,17 @@ export default class FuseIndex<T = any> {
   // indices"; asymmetric throw-vs-no-op would be more surprising than a clean
   // filter.
   removeAll(indices: number[]): void {
-    const toRemove = new Set<number>()
-    for (const v of indices) {
-      if (Number.isInteger(v) && v >= 0) {
-        toRemove.add(v)
-      }
-    }
+    const sorted = Array.from(
+      new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))
+    ).sort((a, b) => a - b)
 
-    if (toRemove.size === 0) {
+    if (!sorted.length) {
       return
     }
 
-    this.records = this.records.filter((r) => !toRemove.has(r.i))
-
-    const sorted = Array.from(toRemove).sort((a, b) => a - b)
-    for (const record of this.records) {
-      // shift = count of removed indices strictly less than record.i
+    // One pass: the binary search both tests membership and yields the
+    // shift (count of removed indices strictly less than record.i).
+    this.records = this.records.filter((record) => {
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
@@ -165,8 +160,10 @@ export default class FuseIndex<T = any> {
         if (sorted[mid] < record.i) lo = mid + 1
         else hi = mid
       }
+      if (sorted[lo] === record.i) return false
       record.i -= lo
-    }
+      return true
+    })
   }
   getValueForItemAtKeyId(item: any, keyId: string): any {
     return item[this._keysMap[keyId]]

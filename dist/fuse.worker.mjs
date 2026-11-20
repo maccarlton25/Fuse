@@ -278,12 +278,9 @@ var FuseIndex = class {
 		for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i > idx) this.records[i].i -= 1;
 	}
 	removeAll(indices) {
-		const toRemove = /* @__PURE__ */ new Set();
-		for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
-		if (toRemove.size === 0) return;
-		this.records = this.records.filter((r) => !toRemove.has(r.i));
-		const sorted = Array.from(toRemove).sort((a, b) => a - b);
-		for (const record of this.records) {
+		const sorted = Array.from(new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))).sort((a, b) => a - b);
+		if (!sorted.length) return;
+		this.records = this.records.filter((record) => {
 			let lo = 0;
 			let hi = sorted.length;
 			while (lo < hi) {
@@ -291,8 +288,10 @@ var FuseIndex = class {
 				if (sorted[mid] < record.i) lo = mid + 1;
 				else hi = mid;
 			}
+			if (sorted[lo] === record.i) return false;
 			record.i -= lo;
-		}
+			return true;
+		});
 	}
 	getValueForItemAtKeyId(item, keyId) {
 		return item[this._keysMap[keyId]];
@@ -1384,8 +1383,8 @@ var Fuse = class {
 		}
 		if (indicesToRemove.length) {
 			if (this._invertedIndex) removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove);
-			const toRemove = new Set(indicesToRemove);
-			this._docs = this._docs.filter((_, i) => !toRemove.has(i));
+			let j = 0;
+			this._docs = this._docs.filter((_, i) => i !== indicesToRemove[j] || (j++, false));
 			this._myIndex.removeAll(indicesToRemove);
 			this._invalidateSearcherCache();
 		}
