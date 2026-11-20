@@ -94,66 +94,52 @@ export default class ExtendedSearch {
       }
     }
 
-    const { includeMatches, isCaseSensitive, ignoreDiacritics } = this.options
+    const options = this.options
 
-    text = isCaseSensitive ? text : text.toLowerCase()
-    text = ignoreDiacritics ? stripDiacritics(text) : text
+    if (!options.isCaseSensitive) text = text.toLowerCase()
+    if (options.ignoreDiacritics) text = stripDiacritics(text)
 
-    let numMatches = 0
-    const allIndices: RangeTuple[] = []
-    let totalScore = 0
-    let hasInverse = false
-
-    // ORs
+    // ORs. A group succeeds only if every matcher matches, so its score sum,
+    // `hasInverse` (any inverse matcher in the group) and indices are only
+    // assembled for the group that succeeds. Matchers are pure, so skipping
+    // the indices of failed groups is unobservable.
     for (let i = 0, qLen = query.length; i < qLen; i += 1) {
       const searchers = query[i]
-
-      // Reset indices
-      allIndices.length = 0
-      numMatches = 0
-      hasInverse = false
+      const pLen = searchers.length
+      // Matched results are only kept when indices are needed.
+      const results: SearchResult[] | false = options.includeMatches && []
+      let totalScore = 0
+      let j = 0
 
       // ANDs
-      for (let j = 0, pLen = searchers.length; j < pLen; j += 1) {
-        const matcher = searchers[j]
-        const { isMatch, indices, score } = matcher.search(text)
-
-        if (isMatch) {
-          numMatches += 1
-          totalScore += score
-
-          if (isInverse(matcher.type)) {
-            hasInverse = true
-          }
-
-          if (includeMatches) {
-            if (MULTI_MATCH_TYPES.has(matcher.type)) {
-              allIndices.push(...(indices as unknown as RangeTuple[]))
-            } else {
-              allIndices.push(indices as unknown as RangeTuple)
-            }
-          }
-        } else {
-          totalScore = 0
-          numMatches = 0
-          allIndices.length = 0
-          hasInverse = false
-          break
-        }
+      for (; j < pLen; j += 1) {
+        const res = searchers[j].search(text)
+        if (!res.isMatch) break
+        totalScore += res.score
+        if (results) results.push(res)
       }
 
       // OR condition, so if TRUE, return
-      if (numMatches) {
+      if (pLen && j === pLen) {
         const result: SearchResult = {
           isMatch: true,
-          score: totalScore / numMatches
+          score: totalScore / pLen
         }
 
-        if (hasInverse) {
+        if (searchers.some((m) => isInverse(m.type))) {
           result.hasInverse = true
         }
 
-        if (includeMatches) {
+        if (results) {
+          const allIndices: RangeTuple[] = []
+          for (j = 0; j < pLen; j += 1) {
+            const indices = results[j].indices as unknown as RangeTuple
+            if (MULTI_MATCH_TYPES.has(searchers[j].type)) {
+              allIndices.push(...(indices as unknown as RangeTuple[]))
+            } else {
+              allIndices.push(indices)
+            }
+          }
           result.indices = mergeIndices(allIndices)
         }
 

@@ -918,42 +918,36 @@ var ExtendedSearch = class ExtendedSearch {
 			isMatch: false,
 			score: 1
 		};
-		const { includeMatches, isCaseSensitive, ignoreDiacritics } = this.options;
-		text = isCaseSensitive ? text : text.toLowerCase();
-		text = ignoreDiacritics ? stripDiacritics(text) : text;
-		let numMatches = 0;
-		const allIndices = [];
-		let totalScore = 0;
-		let hasInverse = false;
+		const options = this.options;
+		if (!options.isCaseSensitive) text = text.toLowerCase();
+		if (options.ignoreDiacritics) text = stripDiacritics(text);
 		for (let i = 0, qLen = query.length; i < qLen; i += 1) {
 			const searchers = query[i];
-			allIndices.length = 0;
-			numMatches = 0;
-			hasInverse = false;
-			for (let j = 0, pLen = searchers.length; j < pLen; j += 1) {
-				const matcher = searchers[j];
-				const { isMatch, indices, score } = matcher.search(text);
-				if (isMatch) {
-					numMatches += 1;
-					totalScore += score;
-					if (isInverse(matcher.type)) hasInverse = true;
-					if (includeMatches) if (MULTI_MATCH_TYPES.has(matcher.type)) allIndices.push(...indices);
-					else allIndices.push(indices);
-				} else {
-					totalScore = 0;
-					numMatches = 0;
-					allIndices.length = 0;
-					hasInverse = false;
-					break;
-				}
+			const pLen = searchers.length;
+			const results = options.includeMatches && [];
+			let totalScore = 0;
+			let j = 0;
+			for (; j < pLen; j += 1) {
+				const res = searchers[j].search(text);
+				if (!res.isMatch) break;
+				totalScore += res.score;
+				if (results) results.push(res);
 			}
-			if (numMatches) {
+			if (pLen && j === pLen) {
 				const result = {
 					isMatch: true,
-					score: totalScore / numMatches
+					score: totalScore / pLen
 				};
-				if (hasInverse) result.hasInverse = true;
-				if (includeMatches) result.indices = mergeIndices(allIndices);
+				if (searchers.some((m) => isInverse(m.type))) result.hasInverse = true;
+				if (results) {
+					const allIndices = [];
+					for (j = 0; j < pLen; j += 1) {
+						const indices = results[j].indices;
+						if (MULTI_MATCH_TYPES.has(searchers[j].type)) allIndices.push(...indices);
+						else allIndices.push(indices);
+					}
+					result.indices = mergeIndices(allIndices);
+				}
 				return result;
 			}
 		}
