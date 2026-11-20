@@ -199,22 +199,16 @@ const Config = Object.freeze({
 
 //#endregion
 //#region src/tools/fieldNorm.ts
-function isWordSeparator(code) {
-	return code >= 9 && code <= 13 || code === 32 || code === 160;
-}
+const RARE_SEPARATORS = /[\t-\r\xa0]/;
 function norm(weight = 1, mantissa = 3) {
 	const cache = /* @__PURE__ */ new Map();
 	const m = Math.pow(10, mantissa);
 	return {
 		get(value) {
-			let numTokens = 0;
-			let inWord = false;
-			for (let i = 0; i < value.length; i++) if (!isWordSeparator(value.charCodeAt(i))) {
-				if (!inWord) {
-					numTokens++;
-					inWord = true;
-				}
-			} else inWord = false;
+			if (RARE_SEPARATORS.test(value)) value = value.replace(/[\t-\r\xa0]/g, " ");
+			const len = value.length;
+			let numTokens = len && value.charCodeAt(0) !== 32 ? 1 : 0;
+			for (let p = value.indexOf(" "); p >= 0; p = value.indexOf(" ", p + 1)) if (p + 1 < len && value.charCodeAt(p + 1) !== 32) numTokens++;
 			if (numTokens === 0) numTokens = 1;
 			if (cache.has(numTokens)) return cache.get(numTokens);
 			const n = Math.round(m / Math.pow(numTokens, .5 * weight)) / m;
