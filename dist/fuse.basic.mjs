@@ -7,9 +7,7 @@
  * http://www.apache.org/licenses/LICENSE-2.0
  */
 //#region src/helpers/typeGuards.ts
-function isArray(value) {
-	return !Array.isArray ? getTag(value) === "[object Array]" : Array.isArray(value);
-}
+const isArray = Array.isArray;
 function baseToString(value) {
 	if (typeof value == "string") return value;
 	if (typeof value === "bigint") return value.toString();
@@ -38,7 +36,8 @@ function isDefined(value) {
 	return value !== void 0 && value !== null;
 }
 function isBlank(value) {
-	return !value.trim().length;
+	const c = value.charCodeAt(0);
+	return !(c > 32 && c < 127) && !value.trim().length;
 }
 function getTag(value) {
 	return value == null ? value === void 0 ? "[object Undefined]" : "[object Null]" : Object.prototype.toString.call(value);
@@ -324,26 +323,14 @@ var FuseIndex = class {
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
 					if (!isDefined(item)) continue;
-					if (isString(item)) {
-						if (!isBlank(item)) {
-							const subRecord = {
-								v: item,
-								i,
-								n: this.norm.get(item)
-							};
-							subRecords.push(subRecord);
-						}
-					} else if (isDefined(item.v)) {
-						const text = isString(item.v) ? item.v : toString(item.v);
-						if (!isBlank(text)) {
-							const subRecord = {
-								v: text,
-								i: item.i,
-								n: this.norm.get(text)
-							};
-							subRecords.push(subRecord);
-						}
-					}
+					const str = isString(item);
+					const text = str ? item : toString(item.v);
+					const idx = str ? i : item.i;
+					if (!isBlank(text)) subRecords.push({
+						v: text,
+						i: idx,
+						n: this.norm.get(text)
+					});
 				}
 				record.$[keyIndex] = subRecords;
 			} else if (isString(value) && !isBlank(value)) {

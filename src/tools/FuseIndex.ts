@@ -211,29 +211,15 @@ export default class FuseIndex<T = any> {
             continue
           }
 
-          if (isString(item)) {
-            // Custom getFn returning plain string array (backward compat)
-            if (!isBlank(item)) {
-              const subRecord: SubRecord = {
-                v: item,
-                i: i,
-                n: this.norm.get(item)
-              }
-
-              subRecords.push(subRecord)
-            }
-          } else if (isDefined(item.v)) {
-            // Default get() returns {v, i} objects with original array indices
-            const text = isString(item.v) ? item.v : toString(item.v)
-            if (!isBlank(text)) {
-              const subRecord: SubRecord = {
-                v: text,
-                i: item.i,
-                n: this.norm.get(text)
-              }
-
-              subRecords.push(subRecord)
-            }
+          // A string item comes from a custom getFn returning a plain string
+          // array (backward compat); the default get() returns {v, i} objects
+          // with original array indices. A missing `v` maps to '', which is
+          // blank and skipped.
+          const str = isString(item)
+          const text = str ? item : toString(item.v)
+          const idx = str ? i : item.i
+          if (!isBlank(text)) {
+            subRecords.push({ v: text, i: idx, n: this.norm.get(text) })
           }
         }
         record.$![keyIndex] = subRecords
