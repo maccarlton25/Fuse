@@ -367,61 +367,45 @@ export default class Fuse<T> {
     // scores consistent with string and keyed queries.
     const keys = this._normalizedKeys()
 
-    const evaluate = (
-      node: ParsedNode,
-      item: any,
-      idx: number
-    ): InternalResult[] => {
+    // Appends the node's matches to `out`; the node matched iff `out` grew.
+    // A failing AND rolls `out` back to where it started, discarding the
+    // matches of the children that did match, exactly like dropping their
+    // result arrays did.
+    const evaluate = (node: ParsedNode, item: any, out: MatchScore[]) => {
       if (!('children' in node)) {
         const { keyId, searcher } = node as ParsedLeaf
 
-        let matches: MatchScore[]
-
         if (keyId === null) {
           // Keyless entry: search across all keys
-          matches = []
-          keys.forEach((key, keyIndex) => {
-            matches.push(
-              ...this._findMatches({
-                key,
-                value: item[keyIndex],
-                searcher: searcher!
-              })
-            )
-          })
+          for (let k = 0; k < keys.length; k += 1) {
+            const m = this._findMatches({
+              key: keys[k],
+              value: item[k],
+              searcher: searcher!
+            })
+            for (let j = 0; j < m.length; j += 1) out.push(m[j])
+          }
         } else {
-          matches = this._findMatches({
+          const m = this._findMatches({
             key: this._keyStore.get(keyId),
             value: this._myIndex.getValueForItemAtKeyId(item, keyId),
             searcher: searcher!
           })
+          for (let j = 0; j < m.length; j += 1) out.push(m[j])
         }
-
-        if (matches && matches.length) {
-          return [
-            {
-              idx,
-              item,
-              matches
-            }
-          ]
-        }
-
-        return []
+        return
       }
 
       const { children, operator } = node as ParsedOperator
-      const res: InternalResult[] = []
+      const start = out.length
       for (let i = 0, len = children.length; i < len; i += 1) {
-        const child = children[i]
-        const result = evaluate(child, item, idx)
-        if (result.length) {
-          res.push(...result)
-        } else if (operator === LogicalOperator.AND) {
-          return []
+        const before = out.length
+        evaluate(children[i], item, out)
+        if (out.length === before && operator === LogicalOperator.AND) {
+          out.length = start
+          return
         }
       }
-      return res
     }
 
     const records = this._myIndex.records
@@ -430,17 +414,19 @@ export default class Fuse<T> {
 
     records.forEach(({ $: item, i: idx }) => {
       if (isDefined(item)) {
-        const expResults = evaluate(expression, item, idx)
+        const matches: MatchScore[] = []
+        evaluate(expression, item, matches)
 
-        if (expResults.length) {
+        if (matches.length) {
           // Dedupe when adding
-          if (!resultMap.has(idx)) {
-            resultMap.set(idx, { idx, item, matches: [] })
-            results.push(resultMap.get(idx)!)
+          const existing = resultMap.get(idx)
+          if (existing) {
+            existing.matches.push(...matches)
+          } else {
+            const result = { idx, item, matches }
+            resultMap.set(idx, result)
+            results.push(result)
           }
-          expResults.forEach(({ matches }) => {
-            resultMap.get(idx)!.matches.push(...matches)
-          })
         }
       }
     })

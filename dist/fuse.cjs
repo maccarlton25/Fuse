@@ -1516,59 +1516,57 @@ var Fuse = class {
 	_searchLogical(query) {
 		const expression = parse(query, this.options);
 		const keys = this._normalizedKeys();
-		const evaluate = (node, item, idx) => {
+		const evaluate = (node, item, out) => {
 			if (!("children" in node)) {
 				const { keyId, searcher } = node;
-				let matches;
-				if (keyId === null) {
-					matches = [];
-					keys.forEach((key, keyIndex) => {
-						matches.push(...this._findMatches({
-							key,
-							value: item[keyIndex],
-							searcher
-						}));
+				if (keyId === null) for (let k = 0; k < keys.length; k += 1) {
+					const m = this._findMatches({
+						key: keys[k],
+						value: item[k],
+						searcher
 					});
-				} else matches = this._findMatches({
-					key: this._keyStore.get(keyId),
-					value: this._myIndex.getValueForItemAtKeyId(item, keyId),
-					searcher
-				});
-				if (matches && matches.length) return [{
-					idx,
-					item,
-					matches
-				}];
-				return [];
+					for (let j = 0; j < m.length; j += 1) out.push(m[j]);
+				}
+				else {
+					const m = this._findMatches({
+						key: this._keyStore.get(keyId),
+						value: this._myIndex.getValueForItemAtKeyId(item, keyId),
+						searcher
+					});
+					for (let j = 0; j < m.length; j += 1) out.push(m[j]);
+				}
+				return;
 			}
 			const { children, operator } = node;
-			const res = [];
+			const start = out.length;
 			for (let i = 0, len = children.length; i < len; i += 1) {
-				const child = children[i];
-				const result = evaluate(child, item, idx);
-				if (result.length) res.push(...result);
-				else if (operator === LogicalOperator.AND) return [];
+				const before = out.length;
+				evaluate(children[i], item, out);
+				if (out.length === before && operator === LogicalOperator.AND) {
+					out.length = start;
+					return;
+				}
 			}
-			return res;
 		};
 		const records = this._myIndex.records;
 		const resultMap = /* @__PURE__ */ new Map();
 		const results = [];
 		records.forEach(({ $: item, i: idx }) => {
 			if (isDefined(item)) {
-				const expResults = evaluate(expression, item, idx);
-				if (expResults.length) {
-					if (!resultMap.has(idx)) {
-						resultMap.set(idx, {
+				const matches = [];
+				evaluate(expression, item, matches);
+				if (matches.length) {
+					const existing = resultMap.get(idx);
+					if (existing) existing.matches.push(...matches);
+					else {
+						const result = {
 							idx,
 							item,
-							matches: []
-						});
-						results.push(resultMap.get(idx));
+							matches
+						};
+						resultMap.set(idx, result);
+						results.push(result);
 					}
-					expResults.forEach(({ matches }) => {
-						resultMap.get(idx).matches.push(...matches);
-					});
 				}
 			}
 		});
