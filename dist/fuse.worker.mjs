@@ -124,30 +124,39 @@ function createKeyId(key) {
 
 //#endregion
 //#region src/helpers/get.ts
-function get(obj, path) {
-	const list = [];
-	let arr = false;
-	const deepGet = (obj, path, index, arrayIndex) => {
-		if (!isDefined(obj)) return;
-		if (!path[index]) list.push(arrayIndex !== void 0 ? {
-			v: obj,
+const isLeaf$1 = (value) => isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint";
+function deepGet(list, obj, path, index, arrayIndex) {
+	if (!isDefined(obj)) return;
+	if (!path[index]) list.push({
+		v: obj,
+		i: arrayIndex
+	});
+	else {
+		const value = obj[path[index]];
+		if (!isDefined(value)) return;
+		if (index === path.length - 1 && isLeaf$1(value)) list.push({
+			v: toString(value),
 			i: arrayIndex
-		} : obj);
-		else {
-			const value = obj[path[index]];
-			if (!isDefined(value)) return;
-			if (index === path.length - 1 && (isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint")) list.push(arrayIndex !== void 0 ? {
-				v: toString(value),
-				i: arrayIndex
-			} : toString(value));
-			else if (isArray(value)) {
-				arr = true;
-				for (let i = 0, len = value.length; i < len; i += 1) deepGet(value[i], path, index + 1, i);
-			} else if (path.length) deepGet(value, path, index + 1, arrayIndex);
+		});
+		else if (isArray(value)) for (let i = 0, len = value.length; i < len; i += 1) deepGet(list, value[i], path, index + 1, i);
+		else deepGet(list, value, path, index + 1, arrayIndex);
+	}
+}
+function get(obj, path) {
+	if (isString(path)) path = path.split(".");
+	for (let index = 0;; index++) {
+		if (!isDefined(obj)) return;
+		if (!path[index]) return obj;
+		const value = obj[path[index]];
+		if (!isDefined(value)) return;
+		if (index === path.length - 1 && isLeaf$1(value)) return toString(value);
+		if (isArray(value)) {
+			const list = [];
+			deepGet(list, obj, path, index, 0);
+			return list;
 		}
-	};
-	deepGet(obj, isString(path) ? path.split(".") : path, 0);
-	return arr ? list : list[0];
+		obj = value;
+	}
 }
 
 //#endregion
