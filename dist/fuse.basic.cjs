@@ -707,16 +707,14 @@ function parse(query, options, { auto = true } = {}) {
 //#region src/core/computeScore.ts
 function computeScoreSingle(matches, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
 	let totalScore = 1;
-	matches.forEach(({ key, norm, score }) => {
+	for (const { key, norm, score } of matches) {
 		const weight = key ? key.weight : null;
 		totalScore *= Math.pow(score === 0 && weight ? Number.EPSILON : score, (weight || 1) * (ignoreFieldNorm ? 1 : norm));
-	});
+	}
 	return totalScore;
 }
-function computeScore(results, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
-	results.forEach((result) => {
-		result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
-	});
+function computeScore(results, options) {
+	for (const result of results) result.score = computeScoreSingle(result.matches, options);
 }
 
 //#endregion
@@ -925,6 +923,39 @@ function removeAndShiftInvertedIndex(index, removedIndices) {
 
 //#endregion
 //#region src/core/index.ts
+function pushMatches(out, key, value, searcher) {
+	if (isArray(value)) {
+		for (const sub of value) if (isDefined(sub.v)) pushMatch(out, key, sub, true, searcher);
+	} else if (isDefined(value)) pushMatch(out, key, value, false, searcher);
+}
+function pushMatch(out, key, sub, inArray, searcher) {
+	const text = sub.v;
+	const searchResult = searcher.searchIn(text);
+	if (searchResult.isMatch) {
+		const match = inArray ? {
+			score: searchResult.score,
+			key,
+			value: text,
+			idx: sub.i,
+			norm: sub.n,
+			indices: searchResult.indices,
+			hasInverse: searchResult.hasInverse
+		} : {
+			score: searchResult.score,
+			key,
+			value: text,
+			norm: sub.n,
+			indices: searchResult.indices,
+			hasInverse: searchResult.hasInverse
+		};
+		if (searchResult.termCount !== void 0) {
+			match.matchedMask = searchResult.matchedMask;
+			match.matchedTerms = searchResult.matchedTerms;
+			match.termCount = searchResult.termCount;
+		}
+		out.push(match);
+	}
+}
 var Fuse = class {
 	constructor(docs, options, index) {
 		this.options = {
@@ -1053,19 +1084,21 @@ var Fuse = class {
 			includeScore
 		});
 	}
-	_searchStringList(query, { heap, ignoreFieldNorm } = {}) {
+	_searchStringList(query, opts = {}) {
+		const heap = opts.heap;
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
-		const { records } = this._myIndex;
+		const records = this._myIndex.records;
 		const results = heap ? null : [];
-		records.forEach(({ v: text, i: idx, n: norm }) => {
-			if (!isDefined(text)) return;
+		for (const record of records) {
+			const text = record.v;
+			if (!isDefined(text)) continue;
 			const searchResult = searcher.searchIn(text);
 			if (searchResult.isMatch) {
 				const match = {
 					score: searchResult.score,
 					value: text,
-					norm,
+					norm: record.n,
 					indices: searchResult.indices
 				};
 				if (requireAllTokens) {
@@ -1077,102 +1110,59 @@ var Fuse = class {
 				if (!requireAllTokens || this._coversAllTokens(matches)) {
 					const result = {
 						item: text,
-						idx,
+						idx: record.i,
 						matches
 					};
 					if (heap) {
-						result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
+						result.score = computeScoreSingle(matches, opts);
 						heap.insert(result);
 					} else results.push(result);
 				}
 			}
-		});
+		}
 		return results;
 	}
 	_searchLogical(query) {
 		throw new Error(LOGICAL_SEARCH_UNAVAILABLE);
 	}
-	_searchObjectList(query, { heap, ignoreFieldNorm } = {}) {
+	_searchObjectList(query, opts = {}) {
+		const heap = opts.heap;
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
-		const { records } = this._myIndex;
+		const records = this._myIndex.records;
 		const keys = this._normalizedKeys();
 		const results = heap ? null : [];
-		records.forEach(({ $: item, i: idx }) => {
-			if (!isDefined(item)) return;
-			const matches = [];
+		let matches = [];
+		for (const record of records) {
+			const item = record.$;
+			if (!isDefined(item)) continue;
 			let anyKeyFailed = false;
 			let hasInverse = false;
-			keys.forEach((key, keyIndex) => {
-				const keyMatches = this._findMatches({
-					key,
-					value: item[keyIndex],
-					searcher
-				});
-				if (keyMatches.length) {
-					matches.push(...keyMatches);
-					if (keyMatches[0].hasInverse) hasInverse = true;
+			for (let k = 0; k < keys.length; k += 1) {
+				const start = matches.length;
+				pushMatches(matches, keys[k], item[k], searcher);
+				if (matches.length > start) {
+					if (matches[start].hasInverse) hasInverse = true;
 				} else anyKeyFailed = true;
-			});
-			if (hasInverse && anyKeyFailed) return;
-			if (matches.length && (!requireAllTokens || this._coversAllTokens(matches))) {
+			}
+			if (matches.length && !(hasInverse && anyKeyFailed) && (!requireAllTokens || this._coversAllTokens(matches))) {
 				const result = {
-					idx,
+					idx: record.i,
 					item,
 					matches
 				};
 				if (heap) {
-					result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
+					result.score = computeScoreSingle(matches, opts);
 					heap.insert(result);
 				} else results.push(result);
-			}
-		});
+				matches = [];
+			} else matches.length = 0;
+		}
 		return results;
 	}
 	_findMatches({ key, value, searcher }) {
-		if (!isDefined(value)) return [];
 		const matches = [];
-		if (isArray(value)) value.forEach(({ v: text, i: idx, n: norm }) => {
-			if (!isDefined(text)) return;
-			const searchResult = searcher.searchIn(text);
-			if (searchResult.isMatch) {
-				const match = {
-					score: searchResult.score,
-					key,
-					value: text,
-					idx,
-					norm,
-					indices: searchResult.indices,
-					hasInverse: searchResult.hasInverse
-				};
-				if (searchResult.termCount !== void 0) {
-					match.matchedMask = searchResult.matchedMask;
-					match.matchedTerms = searchResult.matchedTerms;
-					match.termCount = searchResult.termCount;
-				}
-				matches.push(match);
-			}
-		});
-		else {
-			const { v: text, n: norm } = value;
-			const searchResult = searcher.searchIn(text);
-			if (searchResult.isMatch) {
-				const match = {
-					score: searchResult.score,
-					key,
-					value: text,
-					norm,
-					indices: searchResult.indices,
-					hasInverse: searchResult.hasInverse
-				};
-				if (searchResult.termCount !== void 0) {
-					match.matchedMask = searchResult.matchedMask;
-					match.matchedTerms = searchResult.matchedTerms;
-					match.termCount = searchResult.termCount;
-				}
-				matches.push(match);
-			}
-		}
+		pushMatches(matches, key, value, searcher);
 		return matches;
 	}
 	_coversAllTokens(matches) {

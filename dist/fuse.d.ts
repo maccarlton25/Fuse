@@ -413,15 +413,9 @@ declare class Fuse<T> {
   getIndex(): FuseIndex<T>;
   _normalizedKeys(): KeyObject[];
   search(query: string | Expression, options?: FuseSearchOptions): FuseResult<T>[];
-  _searchStringList(query: string, {
-    heap,
-    ignoreFieldNorm
-  }?: HeapSearchOptions): InternalResult[] | null;
+  _searchStringList(query: string, opts?: HeapSearchOptions): InternalResult[] | null;
   _searchLogical(query: Expression): InternalResult[];
-  _searchObjectList(query: string, {
-    heap,
-    ignoreFieldNorm
-  }?: HeapSearchOptions): InternalResult[] | null;
+  _searchObjectList(query: string, opts?: HeapSearchOptions): InternalResult[] | null;
   _findMatches({
     key,
     value,
