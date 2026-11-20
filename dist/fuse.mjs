@@ -923,42 +923,36 @@ var ExtendedSearch = class ExtendedSearch {
 			isMatch: false,
 			score: 1
 		};
-		const { includeMatches, isCaseSensitive, ignoreDiacritics } = this.options;
-		text = isCaseSensitive ? text : text.toLowerCase();
-		text = ignoreDiacritics ? stripDiacritics(text) : text;
-		let numMatches = 0;
-		const allIndices = [];
-		let totalScore = 0;
-		let hasInverse = false;
+		const options = this.options;
+		if (!options.isCaseSensitive) text = text.toLowerCase();
+		if (options.ignoreDiacritics) text = stripDiacritics(text);
 		for (let i = 0, qLen = query.length; i < qLen; i += 1) {
 			const searchers = query[i];
-			allIndices.length = 0;
-			numMatches = 0;
-			hasInverse = false;
-			for (let j = 0, pLen = searchers.length; j < pLen; j += 1) {
-				const matcher = searchers[j];
-				const { isMatch, indices, score } = matcher.search(text);
-				if (isMatch) {
-					numMatches += 1;
-					totalScore += score;
-					if (isInverse(matcher.type)) hasInverse = true;
-					if (includeMatches) if (MULTI_MATCH_TYPES.has(matcher.type)) allIndices.push(...indices);
-					else allIndices.push(indices);
-				} else {
-					totalScore = 0;
-					numMatches = 0;
-					allIndices.length = 0;
-					hasInverse = false;
-					break;
-				}
+			const pLen = searchers.length;
+			const results = options.includeMatches && [];
+			let totalScore = 0;
+			let j = 0;
+			for (; j < pLen; j += 1) {
+				const res = searchers[j].search(text);
+				if (!res.isMatch) break;
+				totalScore += res.score;
+				if (results) results.push(res);
 			}
-			if (numMatches) {
+			if (pLen && j === pLen) {
 				const result = {
 					isMatch: true,
-					score: totalScore / numMatches
+					score: totalScore / pLen
 				};
-				if (hasInverse) result.hasInverse = true;
-				if (includeMatches) result.indices = mergeIndices(allIndices);
+				if (searchers.some((m) => isInverse(m.type))) result.hasInverse = true;
+				if (results) {
+					const allIndices = [];
+					for (j = 0; j < pLen; j += 1) {
+						const indices = results[j].indices;
+						if (MULTI_MATCH_TYPES.has(searchers[j].type)) allIndices.push(...indices);
+						else allIndices.push(indices);
+					}
+					result.indices = mergeIndices(allIndices);
+				}
 				return result;
 			}
 		}
@@ -1527,59 +1521,57 @@ var Fuse = class {
 	_searchLogical(query) {
 		const expression = parse(query, this.options);
 		const keys = this._normalizedKeys();
-		const evaluate = (node, item, idx) => {
+		const evaluate = (node, item, out) => {
 			if (!("children" in node)) {
 				const { keyId, searcher } = node;
-				let matches;
-				if (keyId === null) {
-					matches = [];
-					keys.forEach((key, keyIndex) => {
-						matches.push(...this._findMatches({
-							key,
-							value: item[keyIndex],
-							searcher
-						}));
+				if (keyId === null) for (let k = 0; k < keys.length; k += 1) {
+					const m = this._findMatches({
+						key: keys[k],
+						value: item[k],
+						searcher
 					});
-				} else matches = this._findMatches({
-					key: this._keyStore.get(keyId),
-					value: this._myIndex.getValueForItemAtKeyId(item, keyId),
-					searcher
-				});
-				if (matches && matches.length) return [{
-					idx,
-					item,
-					matches
-				}];
-				return [];
+					for (let j = 0; j < m.length; j += 1) out.push(m[j]);
+				}
+				else {
+					const m = this._findMatches({
+						key: this._keyStore.get(keyId),
+						value: this._myIndex.getValueForItemAtKeyId(item, keyId),
+						searcher
+					});
+					for (let j = 0; j < m.length; j += 1) out.push(m[j]);
+				}
+				return;
 			}
 			const { children, operator } = node;
-			const res = [];
+			const start = out.length;
 			for (let i = 0, len = children.length; i < len; i += 1) {
-				const child = children[i];
-				const result = evaluate(child, item, idx);
-				if (result.length) res.push(...result);
-				else if (operator === LogicalOperator.AND) return [];
+				const before = out.length;
+				evaluate(children[i], item, out);
+				if (out.length === before && operator === LogicalOperator.AND) {
+					out.length = start;
+					return;
+				}
 			}
-			return res;
 		};
 		const records = this._myIndex.records;
 		const resultMap = /* @__PURE__ */ new Map();
 		const results = [];
 		records.forEach(({ $: item, i: idx }) => {
 			if (isDefined(item)) {
-				const expResults = evaluate(expression, item, idx);
-				if (expResults.length) {
-					if (!resultMap.has(idx)) {
-						resultMap.set(idx, {
+				const matches = [];
+				evaluate(expression, item, matches);
+				if (matches.length) {
+					const existing = resultMap.get(idx);
+					if (existing) existing.matches.push(...matches);
+					else {
+						const result = {
 							idx,
 							item,
-							matches: []
-						});
-						results.push(resultMap.get(idx));
+							matches
+						};
+						resultMap.set(idx, result);
+						results.push(result);
 					}
-					expResults.forEach(({ matches }) => {
-						resultMap.get(idx).matches.push(...matches);
-					});
 				}
 			}
 		});
