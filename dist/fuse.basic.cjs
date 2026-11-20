@@ -490,14 +490,17 @@ function search(text, pattern, patternAlphabet, { location = Config.location, di
 //#endregion
 //#region src/search/bitap/canMatch.ts
 function canMatch(text, { pattern, alphabet, startIndex }, { location, distance, threshold, ignoreLocation }) {
-	let j = text.length;
+	const n = text.length;
 	const m = pattern.length;
-	const expected = Math.max(0, Math.min(location + startIndex, j));
+	const expected = Math.max(0, Math.min(location + startIndex, n));
+	const w = ignoreLocation || distance < 0 ? n : threshold * distance + 1 || n;
+	let j = Math.min(n, expected + w + 2 * m) | 0;
+	const stop = expected > w ? expected - w : 0;
 	const last = 1 << m - 1;
 	let pv = -1;
 	let mv = 0;
 	let score = m;
-	while (j--) {
+	while (j-- > stop) {
 		const eq = alphabet[text[j]] | 0;
 		const xv = eq | mv;
 		const xh = (eq & pv) + pv ^ pv | eq;
