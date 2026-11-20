@@ -724,48 +724,32 @@ var MaxHeap = class {
 		this.heap = [];
 		this.comparator = comparator;
 	}
-	get size() {
-		return this.heap.length;
-	}
 	insert(item) {
-		if (this.size < this.limit) {
-			this.heap.push(item);
-			this._bubbleUp(this.size - 1);
-		} else if (this.comparator(item, this.heap[0]) < 0) {
-			this.heap[0] = item;
-			this._sinkDown(0);
+		const { heap, comparator } = this;
+		let i = heap.length;
+		if (i < this.limit) while (i > 0) {
+			const parent = i - 1 >> 1;
+			if (comparator(item, heap[parent]) <= 0) break;
+			heap[i] = heap[parent];
+			i = parent;
 		}
+		else if (comparator(item, heap[0]) < 0) {
+			const len = i;
+			i = 0;
+			for (;;) {
+				const left = 2 * i + 1;
+				if (left >= len) break;
+				let next = comparator(heap[left], item) > 0 ? left : -1;
+				if (left + 1 < len && comparator(heap[left + 1], next < 0 ? item : heap[left]) > 0) next = left + 1;
+				if (next < 0) break;
+				heap[i] = heap[next];
+				i = next;
+			}
+		} else return;
+		heap[i] = item;
 	}
 	extractSorted() {
 		return this.heap.sort(this.comparator);
-	}
-	_bubbleUp(i) {
-		const heap = this.heap;
-		while (i > 0) {
-			const parent = i - 1 >> 1;
-			if (this.comparator(heap[i], heap[parent]) <= 0) break;
-			const tmp = heap[i];
-			heap[i] = heap[parent];
-			heap[parent] = tmp;
-			i = parent;
-		}
-	}
-	_sinkDown(i) {
-		const heap = this.heap;
-		const len = heap.length;
-		let largest = i;
-		do {
-			i = largest;
-			const left = 2 * i + 1;
-			const right = 2 * i + 2;
-			if (left < len && this.comparator(heap[left], heap[largest]) > 0) largest = left;
-			if (right < len && this.comparator(heap[right], heap[largest]) > 0) largest = right;
-			if (largest !== i) {
-				const tmp = heap[i];
-				heap[i] = heap[largest];
-				heap[largest] = tmp;
-			}
-		} while (largest !== i);
 	}
 };
 

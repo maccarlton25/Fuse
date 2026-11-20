@@ -368,11 +368,8 @@ declare class MaxHeap {
   heap: InternalResult[];
   comparator: Comparator;
   constructor(limit: number, comparator: Comparator);
-  get size(): number;
   insert(item: InternalResult): void;
   extractSorted(): InternalResult[];
-  _bubbleUp(i: number): void;
-  _sinkDown(i: number): void;
 }
 //#endregion
 //#region src/search/token/InvertedIndex.d.ts
