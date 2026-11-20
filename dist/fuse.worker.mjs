@@ -402,7 +402,7 @@ const calcScore = (errors, loc, patternLen, expectedLocation, distance, ignoreLo
 	if (!distance) return proximity ? 1 : accuracy;
 	return accuracy + proximity / distance;
 };
-function search(text, { pattern, alphabet: patternAlphabet }, location, { distance, threshold, findAllMatches, minMatchCharLength, includeMatches, ignoreLocation }) {
+function search(text, { pattern, alphabet: patternAlphabet, table }, location, { distance, threshold, findAllMatches, minMatchCharLength, includeMatches, ignoreLocation }) {
 	if (pattern.length > 32) throw new Error(PATTERN_LENGTH_TOO_LARGE(32));
 	const patternLen = pattern.length;
 	const textLen = text.length;
@@ -445,7 +445,7 @@ function search(text, { pattern, alphabet: patternAlphabet }, location, { distan
 				lastBitArr = bufB = new Int32Array(finish * 2 + 4);
 				cm = charBuf = new Int32Array(finish * 2 + 4);
 			}
-			for (let k = low; k <= finish; k += 1) cm[k] = k > textLen ? 0 : patternAlphabet[text[k - 1]] | 0;
+			for (let k = low; k <= finish; k += 1) cm[k] = k > textLen ? 0 : table[text.charCodeAt(k - 1)] ?? patternAlphabet[text.charCodeAt(k - 1)] | 0;
 		}
 		bitArr[finish + 1] = (1 << i) - 1;
 		let j = finish;
@@ -475,7 +475,7 @@ function search(text, { pattern, alphabet: patternAlphabet }, location, { distan
 	}
 	if (computeMatches && bestLocation >= 0) {
 		const matchEnd = Math.min(textLen - 1, bestLocation + patternLen - 1 + bestErrors);
-		for (let k = bestLocation; k <= matchEnd; k += 1) if (patternAlphabet[text[k]]) matchMask[k] = 1;
+		for (let k = bestLocation; k <= matchEnd; k += 1) if (patternAlphabet[text.charCodeAt(k)]) matchMask[k] = 1;
 	}
 	const result = {
 		isMatch: bestLocation >= 0,
@@ -494,8 +494,8 @@ function search(text, { pattern, alphabet: patternAlphabet }, location, { distan
 function createPatternAlphabet(pattern) {
 	const mask = {};
 	for (let i = 0, len = pattern.length; i < len; i += 1) {
-		const char = pattern.charAt(i);
-		mask[char] = (mask[char] || 0) | 1 << len - i - 1;
+		const code = pattern.charCodeAt(i);
+		mask[code] = (mask[code] || 0) | 1 << len - i - 1;
 	}
 	return mask;
 }
@@ -555,9 +555,11 @@ var BitapSearch = class {
 		this.chunks = [];
 		if (!this.pattern.length) return;
 		const addChunk = (pattern, startIndex) => {
+			const alphabet = createPatternAlphabet(pattern);
 			this.chunks.push({
 				pattern,
-				alphabet: createPatternAlphabet(pattern),
+				alphabet,
+				table: (/* @__PURE__ */ new Int32Array(256)).map((_, code) => alphabet[code]),
 				startIndex
 			});
 		};

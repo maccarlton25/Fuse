@@ -5,7 +5,8 @@ import type { SearchResult } from '../../types'
 
 export interface BitapChunk {
   pattern: string
-  alphabet: Record<string, number>
+  alphabet: Record<number, number>
+  table: Int32Array
   startIndex: number
 }
 
@@ -43,7 +44,7 @@ const calcScore = (
 
 export default function search(
   text: string,
-  { pattern, alphabet: patternAlphabet }: BitapChunk,
+  { pattern, alphabet: patternAlphabet, table }: BitapChunk,
   location: number,
   {
     distance,
@@ -154,7 +155,11 @@ export default function search(
         cm = charBuf = new Int32Array(finish * 2 + 4)
       }
       for (let k = low; k <= finish; k += 1) {
-        cm[k] = k > textLen ? 0 : patternAlphabet[text[k - 1]] | 0
+        cm[k] =
+          k > textLen
+            ? 0
+            : (table[text.charCodeAt(k - 1)] ??
+              patternAlphabet[text.charCodeAt(k - 1)] | 0)
       }
     }
 
@@ -230,7 +235,7 @@ export default function search(
       bestLocation + patternLen - 1 + bestErrors
     )
     for (let k = bestLocation; k <= matchEnd; k += 1) {
-      if (patternAlphabet[text[k]]) {
+      if (patternAlphabet[text.charCodeAt(k)]) {
         matchMask[k] = 1
       }
     }

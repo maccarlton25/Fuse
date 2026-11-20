@@ -60,9 +60,12 @@ export default class BitapSearch {
     }
 
     const addChunk = (pattern: string, startIndex: number): void => {
+      const alphabet = createPatternAlphabet(pattern)
       this.chunks.push({
         pattern,
-        alphabet: createPatternAlphabet(pattern),
+        alphabet,
+        // Masks of char codes below 256 (0 if absent) for the kernel.
+        table: new Int32Array(256).map((_, code) => alphabet[code]),
         startIndex
       })
     }
