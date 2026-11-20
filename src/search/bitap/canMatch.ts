@@ -41,7 +41,7 @@ export default function canMatch(
   let mv = 0
   let score = m
   while (j-- > stop) {
-    const eq = alphabet[text[j]] | 0
+    const eq = alphabet[text[j]]
     const xv = eq | mv
     const xh = (((eq & pv) + pv) ^ pv) | eq
     let ph = mv | ~(xh | pv)

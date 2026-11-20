@@ -500,7 +500,7 @@ function canMatch(text, { pattern, alphabet, startIndex }, { location, distance,
 	let mv = 0;
 	let score = m;
 	while (j-- > stop) {
-		const eq = alphabet[text[j]] | 0;
+		const eq = alphabet[text[j]];
 		const xv = eq | mv;
 		const xh = (eq & pv) + pv ^ pv | eq;
 		let ph = mv | ~(xh | pv);
@@ -622,7 +622,7 @@ var BitapSearch = class {
 			return result;
 		}
 		const { location, distance, threshold, findAllMatches, minMatchCharLength, ignoreLocation } = this.options;
-		if (threshold < 1 && this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) return {
+		if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) return {
 			isMatch: false,
 			score: 1
 		};

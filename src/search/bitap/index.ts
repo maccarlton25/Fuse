@@ -131,12 +131,8 @@ export default class BitapSearch {
       ignoreLocation
     } = this.options
 
-    // Cheap proof that no chunk can match: skip the kernel entirely. With
-    // threshold >= 1 the filter (almost) never rejects, so don't pay for it.
-    if (
-      threshold < 1 &&
-      this.chunks.every((chunk) => !canMatch(text, chunk, this.options))
-    ) {
+    // Cheap proof that no chunk can match: skip the kernel entirely.
+    if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) {
       return { isMatch: false, score: 1 }
     }
 
