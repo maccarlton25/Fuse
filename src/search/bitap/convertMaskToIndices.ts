@@ -1,9 +1,8 @@
-import Config from '../../core/config'
 import type { RangeTuple } from '../../types'
 
 export default function convertMaskToIndices(
-  matchmask: ArrayLike<number> = [],
-  minMatchCharLength: number = Config.minMatchCharLength
+  matchmask: ArrayLike<number>,
+  minMatchCharLength: number
 ): RangeTuple[] {
   const indices: RangeTuple[] = []
   let start = -1

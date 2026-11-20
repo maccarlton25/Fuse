@@ -1,6 +1,4 @@
 import convertMaskToIndices from './convertMaskToIndices'
-import { MAX_BITS } from './constants'
-import * as ErrorMsg from '../../core/errorMessages'
 import type { SearchResult } from '../../types'
 
 export interface BitapChunk {
@@ -55,10 +53,6 @@ export default function search(
     ignoreLocation
   }: KernelOptions
 ): SearchResult {
-  if (pattern.length > MAX_BITS) {
-    throw new Error(ErrorMsg.PATTERN_LENGTH_TOO_LARGE(MAX_BITS))
-  }
-
   const patternLen = pattern.length
   // Set starting location at beginning text and initialize the alphabet.
   const textLen = text.length

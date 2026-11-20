@@ -53,7 +53,6 @@ const UNKNOWN_QUERY_OPERATOR = (op) => `Unknown query operator '${op}'`;
 const EMPTY_QUERY_VALUE = (op, key) => `Empty value for operator '${op}' on key '${key}'`;
 const INVALID_FIELD_QUERY = (key, reason) => `Invalid field query for key '${key}': ${reason}`;
 const OBJECT_QUERY_UNAVAILABLE = "Object query syntax is not available in this build";
-const PATTERN_LENGTH_TOO_LARGE = (max) => `Pattern length exceeds max of ${max}.`;
 const MISSING_KEY_PROPERTY = (name) => `Missing ${name} property in key`;
 const INVALID_KEY_WEIGHT_VALUE = (key) => `Property 'weight' in key '${key}' must be a positive integer`;
 
@@ -372,7 +371,7 @@ function createIndex(keys, docs, { getFn = Config.getFn, fieldNormWeight = Confi
 
 //#endregion
 //#region src/search/bitap/convertMaskToIndices.ts
-function convertMaskToIndices(matchmask = [], minMatchCharLength = Config.minMatchCharLength) {
+function convertMaskToIndices(matchmask, minMatchCharLength) {
 	const indices = [];
 	let start = -1;
 	let end = -1;
@@ -403,7 +402,6 @@ const calcScore = (errors, loc, patternLen, expectedLocation, distance, ignoreLo
 	return accuracy + proximity / distance;
 };
 function search(text, { pattern, alphabet: patternAlphabet, table }, location, { distance, threshold, findAllMatches, minMatchCharLength, includeMatches, ignoreLocation }) {
-	if (pattern.length > 32) throw new Error(PATTERN_LENGTH_TOO_LARGE(32));
 	const patternLen = pattern.length;
 	const textLen = text.length;
 	const expectedLocation = Math.max(0, Math.min(location, textLen));
