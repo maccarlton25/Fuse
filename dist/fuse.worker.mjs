@@ -392,37 +392,37 @@ function convertMaskToIndices(matchmask = [], minMatchCharLength = Config.minMat
 
 //#endregion
 //#region src/search/bitap/search.ts
-function search(text, pattern, patternAlphabet, { location = Config.location, distance = Config.distance, threshold = Config.threshold, findAllMatches = Config.findAllMatches, minMatchCharLength = Config.minMatchCharLength, includeMatches = Config.includeMatches, ignoreLocation = Config.ignoreLocation } = {}) {
+let bufA = /* @__PURE__ */ new Int32Array(256);
+let bufB = /* @__PURE__ */ new Int32Array(256);
+let charBuf = /* @__PURE__ */ new Int32Array(256);
+const calcScore = (errors, loc, patternLen, expectedLocation, distance, ignoreLocation) => {
+	const accuracy = errors / patternLen;
+	if (ignoreLocation) return accuracy;
+	const proximity = Math.abs(expectedLocation - loc);
+	if (!distance) return proximity ? 1 : accuracy;
+	return accuracy + proximity / distance;
+};
+function search(text, { pattern, alphabet: patternAlphabet }, location, { distance, threshold, findAllMatches, minMatchCharLength, includeMatches, ignoreLocation }) {
 	if (pattern.length > 32) throw new Error(PATTERN_LENGTH_TOO_LARGE(32));
 	const patternLen = pattern.length;
 	const textLen = text.length;
 	const expectedLocation = Math.max(0, Math.min(location, textLen));
 	let currentThreshold = threshold;
 	let bestLocation = expectedLocation;
-	const calcScore = (errors, currentLocation) => {
-		const accuracy = errors / patternLen;
-		if (ignoreLocation) return accuracy;
-		const proximity = Math.abs(expectedLocation - currentLocation);
-		if (!distance) return proximity ? 1 : accuracy;
-		return accuracy + proximity / distance;
-	};
 	const computeMatches = minMatchCharLength > 1 || includeMatches;
-	const matchMask = computeMatches ? Array(textLen) : [];
+	const matchMask = new Uint8Array(computeMatches ? textLen : 0);
 	let index;
 	while ((index = text.indexOf(pattern, bestLocation)) > -1) {
-		const score = calcScore(0, index);
+		const score = calcScore(0, index, patternLen, expectedLocation, distance, ignoreLocation);
 		currentThreshold = Math.min(score, currentThreshold);
 		bestLocation = index + patternLen;
-		if (computeMatches) {
-			let i = 0;
-			while (i < patternLen) {
-				matchMask[index + i] = 1;
-				i += 1;
-			}
-		}
+		if (computeMatches) matchMask.fill(1, index, bestLocation);
 	}
 	bestLocation = -1;
-	let lastBitArr = [];
+	let bitArr = bufA;
+	let lastBitArr = bufB;
+	let cm = charBuf;
+	let low = 1;
 	let finalScore = 1;
 	let bestErrors = 0;
 	let binMax = patternLen + textLen;
@@ -431,33 +431,47 @@ function search(text, pattern, patternAlphabet, { location = Config.location, di
 		let binMin = 0;
 		let binMid = binMax;
 		while (binMin < binMid) {
-			if (calcScore(i, expectedLocation + binMid) <= currentThreshold) binMin = binMid;
+			if (calcScore(i, expectedLocation + binMid, patternLen, expectedLocation, distance, ignoreLocation) <= currentThreshold) binMin = binMid;
 			else binMax = binMid;
 			binMid = Math.floor((binMax - binMin) / 2 + binMin);
 		}
 		binMax = binMid;
 		let start = Math.max(1, expectedLocation - binMid + 1);
 		const finish = findAllMatches ? textLen : Math.min(expectedLocation + binMid, textLen) + patternLen;
-		const bitArr = Array(finish + 2);
+		if (!i) {
+			low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1));
+			if (bitArr.length < finish + 2) {
+				bitArr = bufA = new Int32Array(finish * 2 + 4);
+				lastBitArr = bufB = new Int32Array(finish * 2 + 4);
+				cm = charBuf = new Int32Array(finish * 2 + 4);
+			}
+			for (let k = low; k <= finish; k += 1) cm[k] = k > textLen ? 0 : patternAlphabet[text[k - 1]] | 0;
+		}
 		bitArr[finish + 1] = (1 << i) - 1;
-		for (let j = finish; j >= start; j -= 1) {
-			const currentLocation = j - 1;
-			const charMatch = patternAlphabet[text[currentLocation]];
-			bitArr[j] = (bitArr[j + 1] << 1 | 1) & charMatch;
-			if (i) bitArr[j] |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
-			if (bitArr[j] & mask) {
-				finalScore = calcScore(i, currentLocation);
+		let j = finish;
+		for (; j >= start; j -= 1) {
+			let bits = (bitArr[j + 1] << 1 | 1) & cm[j];
+			if (i) bits |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
+			bitArr[j] = bits;
+			if (bits & mask) {
+				finalScore = calcScore(i, j - 1, patternLen, expectedLocation, distance, ignoreLocation);
 				if (finalScore <= currentThreshold) {
 					currentThreshold = finalScore;
-					bestLocation = currentLocation;
+					bestLocation = j - 1;
 					bestErrors = i;
-					if (bestLocation <= expectedLocation) break;
+					if (bestLocation <= expectedLocation) {
+						j -= 1;
+						break;
+					}
 					start = Math.max(1, 2 * expectedLocation - bestLocation);
 				}
 			}
 		}
-		if (calcScore(i + 1, expectedLocation) > currentThreshold) break;
+		if ((i + 1) / patternLen > currentThreshold) break;
+		bitArr.fill(0, low, j + 1);
+		const tmp = lastBitArr;
 		lastBitArr = bitArr;
+		bitArr = tmp;
 	}
 	if (computeMatches && bestLocation >= 0) {
 		const matchEnd = Math.min(textLen - 1, bestLocation + patternLen - 1 + bestErrors);
@@ -578,24 +592,16 @@ var BitapSearch = class {
 			if (includeMatches) result.indices = [[0, text.length - 1]];
 			return result;
 		}
-		const { location, distance, threshold, findAllMatches, minMatchCharLength, ignoreLocation } = this.options;
+		const { location } = this.options;
 		const allIndices = [];
 		let totalScore = 0;
 		let hasMatches = false;
-		this.chunks.forEach(({ pattern, alphabet, startIndex }) => {
-			const { isMatch, score, indices } = search(text, pattern, alphabet, {
-				location: location + startIndex,
-				distance,
-				threshold,
-				findAllMatches,
-				minMatchCharLength,
-				includeMatches,
-				ignoreLocation
-			});
+		for (const chunk of this.chunks) {
+			const { isMatch, score, indices } = search(text, chunk, location + chunk.startIndex, this.options);
 			if (isMatch) hasMatches = true;
 			totalScore += score;
 			if (isMatch && indices) allIndices.push(...indices);
-		});
+		}
 		const result = {
 			isMatch: hasMatches,
 			score: hasMatches ? totalScore / this.chunks.length : 1

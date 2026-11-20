@@ -1,16 +1,10 @@
-import search from './search'
+import search, { type BitapChunk } from './search'
 import createPatternAlphabet from './createPatternAlphabet'
 import { MAX_BITS } from './constants'
 import { mergeIndices } from '../../helpers/mergeIndices'
 import Config from '../../core/config'
 import { stripDiacritics } from '../../helpers/diacritics'
 import type { SearchResult, RangeTuple } from '../../types'
-
-interface BitapChunk {
-  pattern: string
-  alphabet: Record<string, number>
-  startIndex: number
-}
 
 interface BitapOptions {
   location: number
@@ -121,29 +115,19 @@ export default class BitapSearch {
     }
 
     // Otherwise, use Bitap algorithm
-    const {
-      location,
-      distance,
-      threshold,
-      findAllMatches,
-      minMatchCharLength,
-      ignoreLocation
-    } = this.options
+    const { location } = this.options
 
     const allIndices: RangeTuple[] = []
     let totalScore = 0
     let hasMatches = false
 
-    this.chunks.forEach(({ pattern, alphabet, startIndex }) => {
-      const { isMatch, score, indices } = search(text, pattern, alphabet, {
-        location: location + startIndex,
-        distance,
-        threshold,
-        findAllMatches,
-        minMatchCharLength,
-        includeMatches,
-        ignoreLocation
-      })
+    for (const chunk of this.chunks) {
+      const { isMatch, score, indices } = search(
+        text,
+        chunk,
+        location + chunk.startIndex,
+        this.options
+      )
 
       if (isMatch) {
         hasMatches = true
@@ -154,7 +138,7 @@ export default class BitapSearch {
       if (isMatch && indices) {
         allIndices.push(...indices)
       }
-    })
+    }
 
     const result: SearchResult = {
       isMatch: hasMatches,
