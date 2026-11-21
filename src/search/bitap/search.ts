@@ -1,5 +1,4 @@
-import convertMaskToIndices from './convertMaskToIndices'
-import type { SearchResult } from '../../types'
+import type { RangeTuple, SearchResult } from '../../types'
 
 export interface BitapChunk {
   pattern: string
@@ -19,13 +18,19 @@ export interface KernelOptions {
 
 // Scratch buffers reused across calls and grown on demand: two bit arrays
 // swapped per error level, and the alphabet mask of each scanned position.
-let bufA = new Int32Array(256)
-let bufB = new Int32Array(256)
-let charBuf = new Int32Array(256)
+// Windows of KEEP or more positions get buffers for that call only, so at most
+// 3 * (2 * KEEP + 4) * 4 bytes (~720 KB) stay pinned after a whole-text search
+// of a huge field (before, ~24 bytes per character of the longest text ever
+// scanned). Fresh buffers cost ~20% of the scan at every size measured (64 to
+// 262,144 chars), so the cap is set by memory, not by speed.
+const KEEP = 3e4
+let bufA = new Int32Array(0)
+let bufB = new Int32Array(0)
+let charBuf = new Int32Array(0)
 
 // Score of a match with `errors` errors at `loc` (see ./computeScore.ts).
 // A top-level function keeps the kernel's locals out of a closure context.
-const calcScore = (
+export const calcScore = (
   errors: number,
   loc: number,
   patternLen: number,
@@ -73,16 +78,17 @@ export default function search(
 
   // Get all exact matches, here for speed up
   while ((index = text.indexOf(pattern, bestLocation)) > -1) {
-    const score = calcScore(
-      0,
-      index,
-      patternLen,
-      expectedLocation,
-      distance,
-      ignoreLocation
+    currentThreshold = Math.min(
+      calcScore(
+        0,
+        index,
+        patternLen,
+        expectedLocation,
+        distance,
+        ignoreLocation
+      ),
+      currentThreshold
     )
-
-    currentThreshold = Math.min(score, currentThreshold)
     bestLocation = index + patternLen
 
     if (computeMatches) {
@@ -142,11 +148,16 @@ export default function search(
       // 2 * expectedLocation - bestLocation with bestLocation < finish, so no
       // level scans below `low`. Resolve the alphabet mask of every position
       // in [low, finish] once (text[k] is undefined, so 0, past the end).
-      low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1))
+      low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1)) | 0
       if (bitArr.length < finish + 2) {
-        bitArr = bufA = new Int32Array(finish * 2 + 4)
-        lastBitArr = bufB = new Int32Array(finish * 2 + 4)
-        cm = charBuf = new Int32Array(finish * 2 + 4)
+        bitArr = new Int32Array(finish * 2 + 4)
+        lastBitArr = new Int32Array(finish * 2 + 4)
+        cm = new Int32Array(finish * 2 + 4)
+        if (finish < KEEP) {
+          bufA = bitArr
+          bufB = lastBitArr
+          charBuf = cm
+        }
       }
       for (let k = low; k <= finish; k += 1) {
         cm[k] =
@@ -242,7 +253,17 @@ export default function search(
   }
 
   if (computeMatches) {
-    const indices = convertMaskToIndices(matchMask, minMatchCharLength)
+    // Runs of set mask positions of at least minMatchCharLength (the undefined
+    // read past the end closes the last run; formerly ./convertMaskToIndices.ts).
+    const indices: RangeTuple[] = []
+    for (let k = 0, start = -1; k <= textLen; k += 1) {
+      if (matchMask[k]) {
+        if (start < 0) start = k
+      } else if (start >= 0) {
+        if (k - start >= minMatchCharLength) indices.push([start, k - 1])
+        start = -1
+      }
+    }
     if (!indices.length) {
       result.isMatch = false
     } else if (includeMatches) {
