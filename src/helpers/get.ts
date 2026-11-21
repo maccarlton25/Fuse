@@ -14,7 +14,7 @@ const isLeaf = (value: any): boolean =>
   typeof value === 'bigint'
 
 // Generic walk, used once an array is met along the path. Every hit is
-// pushed as `{ v, i }`, where `i` is the index in the outermost array.
+// pushed as `{ v, i }`, where `i` is the index in the innermost array.
 function deepGet(
   list: any[],
   obj: any,
