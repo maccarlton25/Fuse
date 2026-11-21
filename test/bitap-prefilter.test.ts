@@ -299,3 +299,72 @@ describe('bitap kernel: fractional location', () => {
     expect(compared).toBeGreaterThan(500)
   }, 600000)
 })
+
+// ignoreLocation without indices (includeMatches off, minMatchCharLength <= 1)
+// is answered from the Myers pass alone: per chunk, a match iff the minimum
+// edit count k is below the chunk length m and k / m <= threshold, scored
+// max(0.001, k / m), averaged over chunks with 1 for non-matching chunks.
+// Same comparison against the baseline, biased toward that path. The
+// standalone stress script used for the branch ran 200,000+ triples per run.
+describe('bitap direct answers for ignoreLocation', () => {
+  const ALPHABETS = ['abcde', 'abcdeABé ëxyzÉ', 'ab', 'aĀłŁßé\u0301xY']
+  test('agree with the baseline byte for byte', () => {
+    const N = Number(process.env.PREFILTER_DIRECT_ITERS) || 6000
+    let direct = 0
+    let matched = 0
+    for (let n = 0; n < N; n++) {
+      const chars = pick(ALPHABETS).split('')
+      const rs = (k: number) =>
+        Array.from({ length: k }, () => pick(chars)).join('')
+      const m = pick([1, 2, 3, 8, 31, 32, 33, 40, 64, 65, 70, 100])
+      const pattern = rs(m)
+      const len =
+        rng() < 0.02 ? 5000 + int(15001) : pick([0, 5, 20, 60, 200, 600])
+      let text = rs(len)
+      for (let k = int(3); k > 0; k--) {
+        const at = int(text.length + 1)
+        const needle = mutate(
+          pattern,
+          pick([0, 1, 2, int(m), Math.ceil(m * 0.6), m + 1])
+        )
+        text =
+          text.slice(0, at) +
+          (rng() < 0.2 ? needle.toUpperCase() : needle) +
+          text.slice(at)
+      }
+      const options = {
+        ignoreLocation: rng() < 0.9,
+        includeMatches: rng() < 0.1,
+        minMatchCharLength: pick([1, 1, 1, 0, -1, 2]),
+        findAllMatches: rng() < 0.3,
+        threshold: pick([
+          0, -0, 0.001, 0.3, 0.6, 0.6, 0.99, 1, 1.5, -0.1, NaN, Infinity, 1 / 3
+        ]),
+        distance: pick([0, 100, -100, NaN, Infinity, 1e12]),
+        location: pick([0, 5, len, len + 100, -5, 1e12, Infinity, NaN]),
+        isCaseSensitive: rng() < 0.5,
+        ignoreDiacritics: rng() < 0.3
+      }
+      if (
+        options.ignoreLocation &&
+        !options.includeMatches &&
+        !(options.minMatchCharLength > 1)
+      ) {
+        direct++
+      }
+      let expected: string
+      try {
+        expected = JSON.stringify(BaselineFuse.match(pattern, text, options))
+      } catch {
+        // Baseline-only throw (NaN location sizes an array): accepted.
+        continue
+      }
+      if (expected.includes('true')) matched++
+      expect(
+        JSON.stringify(new BitapSearch(pattern, options).searchIn(text))
+      ).toBe(expected)
+    }
+    expect(direct).toBeGreaterThan(N / 2)
+    expect(matched).toBeGreaterThan(N / 10)
+  }, 600000)
+})
