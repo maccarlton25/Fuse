@@ -49,8 +49,10 @@ function pushMatches(
   searcher: Searcher
 ): void {
   if (isArray(value)) {
+    // `for...of` visits holes in a sparse array (a hand-built index passed to
+    // Fuse.parseIndex); `forEach` in the baseline skipped them.
     for (const sub of value) {
-      if (isDefined(sub.v)) {
+      if (sub && isDefined(sub.v)) {
         pushMatch(out, key, sub, true, searcher)
       }
     }
@@ -331,23 +333,22 @@ export default class Fuse<T> {
 
     let results: InternalResult[]
 
-    if (useHeap) {
-      const heap = new MaxHeap(limit, stable)
-      if (isString(this._docs[0])) {
-        this._searchStringList(query as string, { heap, ignoreFieldNorm })
-      } else {
-        this._searchObjectList(query as string, { heap, ignoreFieldNorm })
+    if (isString(query)) {
+      // The scans score each result as they collect it, and return the heap's
+      // sorted top-N when given one.
+      const opts = {
+        heap: useHeap ? new MaxHeap(limit, stable) : undefined,
+        ignoreFieldNorm
       }
-      results = heap.extractSorted()
+      results = isString(this._docs[0])
+        ? this._searchStringList(query, opts)!
+        : this._searchObjectList(query, opts)!
     } else {
-      results = isString(query)
-        ? isString(this._docs[0])
-          ? this._searchStringList(query)!
-          : this._searchObjectList(query)!
-        : this._searchLogical(query as Expression)
-
+      results = this._searchLogical(query)
       computeScore(results, { ignoreFieldNorm })
+    }
 
+    if (!useHeap) {
       if (shouldSort) {
         results.sort(isString(query) ? stable : comparator)
       }
@@ -372,10 +373,12 @@ export default class Fuse<T> {
     const requireAllTokens =
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
     const records = this._myIndex.records
-    const results: InternalResult[] | null = heap ? null : []
+    const results: InternalResult[] = []
 
     // Iterate over every string in the index
     for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
       const text = record.v
       if (!isDefined(text)) {
         continue
@@ -401,18 +404,14 @@ export default class Fuse<T> {
         // before heap insertion so `limit` returns the same top-N as unlimited.
         if (!requireAllTokens || this._coversAllTokens(matches)) {
           const result: InternalResult = { item: text, idx: record.i, matches }
+          result.score = computeScoreSingle(matches, opts)
 
-          if (heap) {
-            result.score = computeScoreSingle(matches, opts)
-            heap.insert(result)
-          } else {
-            results!.push(result)
-          }
+          heap ? heap.insert(result) : results.push(result)
         }
       }
     }
 
-    return results
+    return heap ? heap.extractSorted() : results
   }
 
   _searchLogical(query: Expression): InternalResult[] {
@@ -511,13 +510,15 @@ export default class Fuse<T> {
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
     const records = this._myIndex.records
     const keys = this._normalizedKeys()
-    const results: InternalResult[] | null = heap ? null : []
+    const results: InternalResult[] = []
     // One matches array per record, reused until a record actually matches,
     // instead of a fresh array per key per record.
     let matches: MatchScore[] = []
 
     // List is Array<Object>
     for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
       const item = record.$
       if (!isDefined(item)) {
         continue
@@ -550,20 +551,16 @@ export default class Fuse<T> {
         (!requireAllTokens || this._coversAllTokens(matches))
       ) {
         const result: InternalResult = { idx: record.i, item, matches }
+        result.score = computeScoreSingle(matches, opts)
 
-        if (heap) {
-          result.score = computeScoreSingle(matches, opts)
-          heap.insert(result)
-        } else {
-          results!.push(result)
-        }
+        heap ? heap.insert(result) : results.push(result)
         matches = []
       } else {
         matches.length = 0
       }
     }
 
-    return results
+    return heap ? heap.extractSorted() : results
   }
 
   _findMatches({
@@ -584,8 +581,9 @@ export default class Fuse<T> {
   // unless the matched terms across ALL of a record's field/array-element
   // matches fail to cover every query term. `termCount` is only set by
   // TokenSearch in 'all' mode, so non-token / 'any' searches always pass.
+  // Both callers pass a non-empty `matches`.
   _coversAllTokens(matches: MatchScore[]): boolean {
-    const termCount = matches.length ? matches[0].termCount : undefined
+    const termCount = matches[0].termCount
     if (termCount === undefined) {
       return true
     }

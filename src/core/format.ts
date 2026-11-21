@@ -8,7 +8,7 @@ export default function format<T>(
   {
     includeMatches = Config.includeMatches,
     includeScore = Config.includeScore
-  } = {}
+  }: { includeMatches?: boolean; includeScore?: boolean }
 ): FuseResult<T>[] {
   return results.map((result) => {
     const { idx } = result
