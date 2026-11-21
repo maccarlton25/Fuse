@@ -6,6 +6,7 @@ import {
   toString
 } from '../helpers/typeGuards'
 import Config from '../core/config'
+import get, { isLeaf } from '../helpers/get'
 import * as ErrorMsg from '../core/errorMessages'
 import normGenerator from './fieldNorm'
 import { createKey } from './KeyStore'
@@ -203,27 +204,50 @@ export default class FuseIndex<T = any> {
       keyIndex++
     ) {
       const key = this.keys[keyIndex]
-      const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path)
+      const path = key.path
+      let value
+
+      if (key.getFn) {
+        value = key.getFn(doc)
+      } else if (this.getFn !== get || path.length > 1 || !path[0]) {
+        value = this.getFn(doc, path)
+      } else {
+        // The default getFn on a one-segment path, inlined: read the field
+        // once, as get() does. Array items are read in one pass and the
+        // conversion below runs after it, as with get(), but string items
+        // need no `{ v, i }` wrapper (a string item at `i` means `{ v, i }`).
+        // The leaf test comes first, as in get(): on a Proxy it is observable.
+        value = doc?.[path[0]]
+        if (isLeaf(value)) {
+          value = toString(value)
+        } else if (isArray(value)) {
+          const items = value
+          value = []
+          for (let i = 0, len = items.length; i < len; i += 1) {
+            const item = items[i]
+            value[i] = isString(item) ? item : { v: item, i }
+          }
+        }
+      }
 
       if (isArray(value)) {
         const subRecords: SubRecord[] = []
 
         for (let i = 0, len = value.length; i < len; i += 1) {
           const item = value[i]
-
-          if (!isDefined(item)) {
-            continue
-          }
-
           // A string item comes from a custom getFn returning a plain string
-          // array (backward compat); the default get() returns {v, i} objects
-          // with original array indices. A missing `v` maps to '', which is
-          // blank and skipped.
+          // array (backward compat) or from the inlined default getFn above;
+          // otherwise items are `{ v, i }` objects with original array
+          // indices. A missing item or `v` maps to '', which is blank and
+          // skipped.
           const str = isString(item)
-          const text = str ? item : toString(item.v)
-          const idx = str ? i : item.i
+          const text = str ? item : toString(item?.v)
           if (!isBlank(text)) {
-            subRecords.push({ v: text, i: idx, n: this.norm.get(text) })
+            subRecords.push({
+              v: text,
+              i: str ? i : item.i,
+              n: this.norm.get(text)
+            })
           }
         }
         $[keyIndex] = subRecords

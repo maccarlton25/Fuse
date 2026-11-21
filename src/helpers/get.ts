@@ -7,7 +7,7 @@ import {
   toString
 } from './typeGuards'
 
-const isLeaf = (value: any): boolean =>
+export const isLeaf = (value: any): boolean =>
   isString(value) ||
   isNumber(value) ||
   isBoolean(value) ||

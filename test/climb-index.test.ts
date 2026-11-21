@@ -391,3 +391,130 @@ describe('cached field norms match the baseline for any weight', () => {
     }
   })
 })
+
+describe('inlined default getFn on one-segment keys matches the baseline', () => {
+  const json = (f: any) => JSON.stringify(f.getIndex().toJSON())
+  class Odd {
+    toString() {
+      return 'odd one'
+    }
+  }
+  const values: any[] = [
+    'plain words',
+    '',
+    '  ',
+    0,
+    -0,
+    12.5,
+    NaN,
+    true,
+    false,
+    10n,
+    null,
+    undefined,
+    new Boolean(false),
+    new String('wrapped'),
+    new Number(3),
+    { v: 'looks like a hit', i: 9 },
+    new Odd(),
+    [],
+    ['a', 'b c'],
+    ['a', , 'b'],
+    [null, undefined, '', ' ', 'x'],
+    [0, -0, 1n, true, new Boolean(true), new String('s')],
+    [['n', ['m']], { v: 'w' }, new Odd()],
+    Object.assign(['p', 'q'], { extra: 'not an index' })
+  ]
+  test('every value kind, docs that are not objects, odd key paths', () => {
+    let seed = 41
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const pick = () => values[Math.floor(rnd() * values.length)]
+    const docs: any[] = [{ a: 'first', b: ['x'] }]
+    for (let k = 0; k < 300; k++) {
+      const r = rnd()
+      docs.push(
+        r < 0.03 ? null : r < 0.06 ? 'a string doc' : r < 0.08 ? 7 : { a: pick(), b: pick(), length: pick(), '': pick() }
+      )
+    }
+    const keySets: any[] = [
+      ['a', 'b'],
+      [['a'], 'length'],
+      ['a.', ['b', '']],
+      [[''], 'b'],
+      [[], 'a'],
+      [[0], 'b'],
+      [{ name: 'a', weight: 2 }, { name: ['b'] }]
+    ]
+    for (const keys of keySets) {
+      for (const extra of [{}, { getFn: Fuse.config.getFn }, { useTokenSearch: true }]) {
+        const opts = { keys, ...extra }
+        const a = new Fuse(docs.slice(), opts)
+        const b = new BaselineFuse(docs.slice(), opts)
+        expect(json(a)).toBe(json(b))
+        for (const d of docs.slice(0, 40)) {
+          a.add(d)
+          b.add(d)
+        }
+        expect(json(a)).toBe(json(b))
+        const big = (_: string, v: any) =>
+          typeof v === 'bigint' ? 'bigint ' + v : v
+        expect(JSON.stringify(a.search('words'), big)).toBe(
+          JSON.stringify(b.search('words'), big)
+        )
+      }
+    }
+  })
+
+  test('custom getFn, global or per key, keeps the generic path', () => {
+    const docs = [{ a: ['x', 'y'], b: 'z' }, { a: 'w', b: ['v'] }]
+    const keyGetFn = function (this: any, d: any) {
+      return this.name === 'a' ? d.a : ['k']
+    }
+    const optsList: any[] = [
+      { keys: ['a', 'b'], getFn: (d: any, p: any) => (p[0] === 'a' ? ['g'] : d.b) },
+      { keys: [{ name: 'a', getFn: keyGetFn }, 'b'] }
+    ]
+    for (const opts of optsList) {
+      expect(json(new Fuse(docs, opts))).toBe(json(new BaselineFuse(docs, opts)))
+    }
+  })
+
+  test('reads, getters, Proxy traps and toString calls happen in the same order', () => {
+    const run = (F: any) => {
+      const log: string[] = []
+      const obj = (name: string) => ({
+        toString() {
+          log.push('toString ' + name)
+          return name
+        }
+      })
+      const arr = new Proxy(['s0', obj('o1'), , 's3', obj('o4')], {
+        get(t: any, k) {
+          log.push('get ' + String(k))
+          return t[k]
+        },
+        has(t: any, k) {
+          log.push('has ' + String(k))
+          return k in t
+        }
+      })
+      const doc = {
+        get a() {
+          log.push('read a')
+          return arr
+        },
+        get b() {
+          log.push('read b')
+          return obj('lone')
+        },
+        get c() {
+          log.push('read c')
+          return 5
+        }
+      }
+      const f = new F([doc], { keys: ['a', 'b', 'c'] })
+      return JSON.stringify([log, f.getIndex().toJSON()])
+    }
+    expect(run(Fuse)).toBe(run(BaselineFuse))
+  })
+})

@@ -311,18 +311,34 @@ var FuseIndex = class {
 	_createObjectRecord(doc, docIndex, $ = {}) {
 		for (let keyIndex = 0, keyLen = this.keys.length; keyIndex < keyLen; keyIndex++) {
 			const key = this.keys[keyIndex];
-			const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path);
+			const path = key.path;
+			let value;
+			if (key.getFn) value = key.getFn(doc);
+			else if (this.getFn !== get || path.length > 1 || !path[0]) value = this.getFn(doc, path);
+			else {
+				value = doc?.[path[0]];
+				if (isLeaf$1(value)) value = toString(value);
+				else if (isArray(value)) {
+					const items = value;
+					value = [];
+					for (let i = 0, len = items.length; i < len; i += 1) {
+						const item = items[i];
+						value[i] = isString(item) ? item : {
+							v: item,
+							i
+						};
+					}
+				}
+			}
 			if (isArray(value)) {
 				const subRecords = [];
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
-					if (!isDefined(item)) continue;
 					const str = isString(item);
-					const text = str ? item : toString(item.v);
-					const idx = str ? i : item.i;
+					const text = str ? item : toString(item?.v);
 					if (!isBlank(text)) subRecords.push({
 						v: text,
-						i: idx,
+						i: str ? i : item.i,
 						n: this.norm.get(text)
 					});
 				}
