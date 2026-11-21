@@ -4,8 +4,7 @@ import type { NormInterface } from '../types'
 // CR 13, space 32) plus NBSP (160). This is deliberately narrower than the
 // full Unicode whitespace set (\s); it skips rarer separators like the
 // ideographic space and en/em spaces, which the field-norm heuristic is too
-// coarse to benefit from distinguishing. All but the space are mapped to a
-// space first (only when present).
+// coarse to benefit from distinguishing.
 const RARE_SEPARATORS = /[\t-\r\xa0]/
 
 // Field-length norm: the shorter the field, the higher the weight.
@@ -19,21 +18,22 @@ export default function norm(
 
   return {
     get(value: string): number {
-      // Count words by tallying word-starts (transitions from separator/start
-      // to non-separator). This avoids allocating a regex match array and
-      // correctly handles leading and trailing separators.
-      //
-      // A separator here is common ASCII whitespace (space, tab, newline, CR,
-      // vertical tab, form feed) plus NBSP, not the full Unicode set.
-      if (RARE_SEPARATORS.test(value)) {
-        value = value.replace(/[\t-\r\xa0]/g, ' ')
-      }
-      // A word starts at index 0 or right after a space; indexOf scans
-      // natively, far faster than a per-char loop.
-      const len = value.length
-      let numTokens = len && value.charCodeAt(0) !== 32 ? 1 : 0
-      for (let p = value.indexOf(' '); p >= 0; p = value.indexOf(' ', p + 1)) {
-        if (p + 1 < len && value.charCodeAt(p + 1) !== 32) numTokens++
+      // Count words by tallying word-starts (a non-separator at index 0 or
+      // right after a separator), without allocating. When the only
+      // separator present is the space, jump from each word-start straight
+      // to the next space with indexOf, which scans natively; otherwise walk
+      // every char.
+      const rare = RARE_SEPARATORS.test(value)
+      let numTokens = 0
+      for (let i = 0, inWord = false, len = value.length; i < len; i++) {
+        const c = value.charCodeAt(i)
+        if (c > 32 ? c === 160 : c === 32 || (c > 8 && c < 14)) {
+          inWord = false
+        } else if (!inWord) {
+          numTokens++
+          inWord = rare
+          if (!rare && (i = value.indexOf(' ', i)) < 0) break
+        }
       }
       // Empty strings and all-whitespace strings have no real words; treat
       // them as a single token so the formula never divides by zero.

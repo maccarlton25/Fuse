@@ -204,10 +204,17 @@ function norm(weight = 1, mantissa = 3) {
 	const m = Math.pow(10, mantissa);
 	return {
 		get(value) {
-			if (RARE_SEPARATORS.test(value)) value = value.replace(/[\t-\r\xa0]/g, " ");
-			const len = value.length;
-			let numTokens = len && value.charCodeAt(0) !== 32 ? 1 : 0;
-			for (let p = value.indexOf(" "); p >= 0; p = value.indexOf(" ", p + 1)) if (p + 1 < len && value.charCodeAt(p + 1) !== 32) numTokens++;
+			const rare = RARE_SEPARATORS.test(value);
+			let numTokens = 0;
+			for (let i = 0, inWord = false, len = value.length; i < len; i++) {
+				const c = value.charCodeAt(i);
+				if (c > 32 ? c === 160 : c === 32 || c > 8 && c < 14) inWord = false;
+				else if (!inWord) {
+					numTokens++;
+					inWord = rare;
+					if (!rare && (i = value.indexOf(" ", i)) < 0) break;
+				}
+			}
 			if (numTokens === 0) numTokens = 1;
 			if (cache.has(numTokens)) return cache.get(numTokens);
 			const n = Math.round(m / Math.pow(numTokens, .5 * weight)) / m;

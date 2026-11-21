@@ -2,12 +2,13 @@ import get from '../src/helpers/get'
 import norm from '../src/tools/fieldNorm'
 import { isBlank } from '../src/helpers/typeGuards'
 import FuseIndex from '../src/tools/FuseIndex'
-// @ts-ignore untyped locked oracle
-import BaselineFuse from '../bench/baseline-fuse.mjs'
 
 process.env.EXTENDED_SEARCH_ENABLED = 'true'
 process.env.TOKEN_SEARCH_ENABLED = 'true'
 const { default: Fuse } = await import('../src/entry')
+// The locked baseline oracle (untyped).
+const oracle: string = '../bench/baseline-fuse.mjs'
+const { default: BaselineFuse } = await import(oracle)
 
 // Reference implementations copied from the pre-optimization code; the
 // optimized versions must agree with them exactly.
@@ -179,7 +180,6 @@ const snap = (f: any, queries: string[]) =>
 
 describe('Fuse.remove on sparse docs matches the baseline', () => {
   test('hole at a removed index keeps docs and index in step', () => {
-    // eslint-disable-next-line no-sparse-arrays
     const docs = ['apple', , 'banana', 'cherry'] as any[]
     const a = new Fuse(docs.slice())
     const b = new BaselineFuse(docs.slice())
@@ -199,8 +199,7 @@ describe('Fuse.remove on sparse docs matches the baseline', () => {
       for (let i = 0; i < n; i++) {
         if (rnd() < 0.3) continue // hole
         const w = words[Math.floor(rnd() * words.length)]
-        // eslint-disable-next-line no-sparse-arrays
-        docs[i] = objects ? { t: w, tags: [w, , 'x' + i] } : w
+            docs[i] = objects ? { t: w, tags: [w, , 'x' + i] } : w
       }
       if (objects && docs[0] === undefined) docs[0] = { t: 'first' }
       if (!objects && docs[0] === undefined) docs[0] = 'first'
@@ -217,6 +216,31 @@ describe('Fuse.remove on sparse docs matches the baseline', () => {
       )
       const qs = ['apple', 'cherry', 'x3', 'first']
       expect(snap(a, qs)).toBe(snap(b, qs))
+    }
+  })
+})
+
+describe('field norm over rare separators matches the baseline', () => {
+  test('tabs, LF, VT, FF, CR, NBSP, leading, trailing and repeated runs', () => {
+    let seed = 29
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const seps = ['\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u3000', '\u2003', '\x08', '\x0e', '\x1f', '!']
+    const docs: any[] = []
+    for (let k = 0; k < 400; k++) {
+      let s = ''
+      const n = Math.floor(rnd() * 12)
+      for (let i = 0; i < n; i++) {
+        s += rnd() < 0.5 ? seps[Math.floor(rnd() * seps.length)] : 'w' + i
+      }
+      docs.push({ t: s, tags: [s, s + ' x', '\t' + s] })
+    }
+    for (const fieldNormWeight of [0, 0.5, 1, 2.5]) {
+      const opts = { keys: ['t', 'tags'], fieldNormWeight }
+      const a = new Fuse(docs, opts)
+      const b = new BaselineFuse(docs, opts)
+      expect(JSON.stringify(a.getIndex().toJSON())).toBe(
+        JSON.stringify(b.getIndex().toJSON())
+      )
     }
   })
 })
