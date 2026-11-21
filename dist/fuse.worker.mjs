@@ -856,8 +856,8 @@ function normalizeValue(pattern, options) {
 var ExtendedSearch = class ExtendedSearch {
 	constructor(pattern, options = {}) {
 		this.options = resolveOptions(options);
-		this.pattern = normalizeValue(pattern, options);
-		this.query = parseQuery(this.pattern, options);
+		this.pattern = normalizeValue(pattern, this.options);
+		this.query = parseQuery(this.pattern, this.options);
 	}
 	static fromMatchers(query, options = {}) {
 		const search = Object.create(ExtendedSearch.prototype);

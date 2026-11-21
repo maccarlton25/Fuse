@@ -39,8 +39,8 @@ export default class ExtendedSearch {
 
   constructor(pattern: string, options: any = {}) {
     this.options = resolveOptions(options)
-    this.pattern = normalizeValue(pattern, options)
-    this.query = parseQuery(this.pattern, options)
+    this.pattern = normalizeValue(pattern, this.options)
+    this.query = parseQuery(this.pattern, this.options)
   }
 
   // Build an ExtendedSearch that evaluates a pre-compiled `Matcher[][]` (an
