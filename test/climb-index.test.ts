@@ -559,3 +559,38 @@ describe('FuseIndex.removeAll with one record object listed twice (D3)', () => {
     }
   })
 })
+
+describe('index creation reads item.v as often as the baseline (D2)', () => {
+  const run = (F: any, values: any[]) => {
+    let n = 0
+    const log: string[] = []
+    const items = values.map((val, i) => ({
+      get v() {
+        n++
+        log.push('v' + i)
+        return typeof val === 'function' ? val(n) : val
+      },
+      get i() {
+        log.push('i' + i)
+        return i
+      }
+    }))
+    let rec: any
+    try {
+      const f = new F([{}], { keys: [{ name: 'k', getFn: () => items }] })
+      rec = f.getIndex().toJSON().records
+    } catch (e: any) {
+      rec = `${e.constructor.name}: ${e.message}`
+    }
+    return JSON.stringify({ rec, n, log })
+  }
+  test.each([
+    ['stateful string', [(n: number) => (n === 1 ? 'first' : 'later')]],
+    ['stateful number', [(n: number) => (n === 1 ? 1 : n === 2 ? 'two' : 3)]],
+    ['nullish then string', [(n: number) => (n === 1 ? null : 'x')]],
+    ['string then nullish', [(n: number) => (n === 1 ? 'x' : undefined)]],
+    ['plain values', ['a', 5, null, undefined, '  ', 0, -0, 10n, true]]
+  ])('%s', (_name, values) => {
+    expect(run(Fuse, values as any[])).toBe(run(BaselineFuse, values as any[]))
+  })
+})

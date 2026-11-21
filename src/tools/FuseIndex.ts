@@ -250,9 +250,16 @@ export default class FuseIndex<T = any> {
           // array (backward compat) or from the inlined default getFn above;
           // otherwise items are `{ v, i }` objects with original array
           // indices. A missing item or `v` maps to '', which is blank and
-          // skipped.
+          // skipped. `item.v` is read as in the baseline: once when nullish,
+          // otherwise three times (a custom getFn may return getters).
           const str = isString(item)
-          const text = str ? item : toString(item?.v)
+          const text = str
+            ? item
+            : isDefined(item?.v)
+              ? isString(item.v)
+                ? item.v
+                : toString(item.v)
+              : ''
           if (!isBlank(text)) {
             subRecords.push({
               v: text,

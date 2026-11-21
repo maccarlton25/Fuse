@@ -323,7 +323,7 @@ var FuseIndex = class {
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
 					const str = isString(item);
-					const text = str ? item : toString(item?.v);
+					const text = str ? item : isDefined(item?.v) ? isString(item.v) ? item.v : toString(item.v) : "";
 					if (!isBlank(text)) subRecords.push({
 						v: text,
 						i: str ? i : item.i,
