@@ -480,7 +480,7 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 
 //#endregion
 //#region src/search/bitap/canMatch.ts
-function canMatch(text, { pattern, alphabet, table, startIndex }, { location, distance, threshold, ignoreLocation }) {
+function canMatch(text, { pattern, alphabet, table, startIndex }, { location, distance, threshold, ignoreLocation }, any) {
 	const n = text.length;
 	const m = pattern.length;
 	const expected = Math.max(0, Math.min(location + startIndex, n));
@@ -495,7 +495,9 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 	let kmax = Math.min(m, Math.floor(threshold * m));
 	if (kmax < m && (kmax + 1) / m <= threshold) kmax++;
 	if (kmax / m > threshold) kmax--;
-	if (!(distance > 0)) kmax = m;
+	if (ignoreLocation) {
+		if (kmax >= m) kmax = m - 1;
+	} else if (!(distance > 0)) kmax = m;
 	if (j - stop > 32 && threshold >= 0 && (j < n ? text.slice(stop, j).includes(pattern) : text.includes(pattern, stop))) return -1;
 	while (j-- > stop) {
 		const c = text.charCodeAt(j);
@@ -510,9 +512,14 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 		mh <<= 1;
 		pv = mh | ~(xv | ph);
 		mv = ph & xv;
-		if (ignoreLocation) {
-			if (score < best) best = score;
-		} else if (score <= kmax && calcScore(score, j, m, expected, distance, false) <= threshold) return 1;
+		if (score <= kmax) {
+			if (!ignoreLocation) {
+				if (calcScore(score, j, m, expected, distance, false) <= threshold) return 1;
+			} else if (score < best) {
+				best = score;
+				if (any || !score) break;
+			}
+		}
 	}
 	return best < m && best / m <= threshold ? ~best : 0;
 }
@@ -616,7 +623,7 @@ var BitapSearch = class {
 		let hasMatches = false;
 		let totalScore = 0;
 		for (const chunk of this.chunks) {
-			const r = canMatch(text, chunk, this.options);
+			const r = canMatch(text, chunk, this.options, !direct);
 			if (r) {
 				hasMatches = true;
 				if (!direct) break;

@@ -20,7 +20,10 @@ export default function canMatch(
     distance: number
     threshold: number
     ignoreLocation: boolean
-  }
+  },
+  // The caller only tests the result for truth: stop at the first passing
+  // start with ignoreLocation too, instead of finding the minimum count.
+  any?: boolean
 ): number {
   const n = text.length
   const m = pattern.length
@@ -50,7 +53,9 @@ export default function canMatch(
   let kmax = Math.min(m, Math.floor(threshold * m))
   if (kmax < m && (kmax + 1) / m <= threshold) kmax++
   if (kmax / m > threshold) kmax--
-  if (!(distance > 0)) kmax = m
+  if (ignoreLocation) {
+    if (kmax >= m) kmax = m - 1
+  } else if (!(distance > 0)) kmax = m
   // An exact copy inside [stop, j) has D = 0: accept without walking the
   // window down to it (O(threshold * distance) when it is the only hit, where
   // the kernel's indexOf pre-pass stops at once). Past 32 positions the native
@@ -80,18 +85,22 @@ export default function canMatch(
     mh <<= 1
     pv = mh | ~(xv | ph)
     mv = ph & xv
-    if (ignoreLocation) {
-      if (score < best) best = score
-    } else if (
-      score <= kmax &&
-      calcScore(score, j, m, expected, distance, false) <= threshold
-    ) {
-      return 1
+    if (score <= kmax) {
+      if (!ignoreLocation) {
+        if (calcScore(score, j, m, expected, distance, false) <= threshold)
+          return 1
+      } else if (score < best) {
+        best = score
+        // Only the minimum matters, and only when the caller wants it.
+        if (any || !score) break
+      }
     }
   }
   // With ignoreLocation every start scores errors / m, so the kernel matches
   // iff the minimum edit count `best` over all starts is below m and scores
   // <= threshold; it then reports exactly best / m. Return ~best (always
-  // truthy) so the caller can answer without the kernel.
+  // truthy) so the caller can answer without the kernel. Counts above kmax
+  // never reach `best`, so a returned best is the true minimum when `any` is
+  // not set (and some passing count when it is).
   return best < m && best / m <= threshold ? ~best : 0
 }
