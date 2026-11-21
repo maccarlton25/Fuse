@@ -298,3 +298,27 @@ describe('get() reads each path segment once, like the baseline', () => {
     }
   })
 })
+
+describe('errors thrown while indexing match the baseline', () => {
+  const thrown = (F: any, docs: any[], opts?: any) => {
+    try {
+      new F(docs, opts)
+      return 'no throw'
+    } catch (e: any) {
+      return `${e.constructor.name}: ${e.message}`
+    }
+  }
+  test.each([
+    [['a', 5]],
+    [['a', {}]],
+    [['a', true]],
+    [['a', 1n]],
+    [['a', ['b']]],
+    [['a', new String(' ')]],
+    [['a', { trim: () => '' }]],
+    [['a', { charCodeAt: () => 65 }]],
+    [['a', Symbol('s')]]
+  ])('string list %#', (docs) => {
+    expect(thrown(Fuse, docs)).toBe(thrown(BaselineFuse, docs))
+  })
+})

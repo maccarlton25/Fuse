@@ -49,9 +49,7 @@ export function isDefined<T>(value: T | undefined | null): value is T {
 }
 
 export function isBlank(value: string): boolean {
-  // A printable non-space ASCII first char can't be trimmed: skip trim().
-  const c = value.charCodeAt(0)
-  return !(c > 32 && c < 127) && !value.trim().length
+  return !value.trim().length
 }
 
 // Gets the `toStringTag` of `value`.
