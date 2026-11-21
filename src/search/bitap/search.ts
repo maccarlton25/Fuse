@@ -25,7 +25,7 @@ let charBuf = new Int32Array(256)
 
 // Score of a match with `errors` errors at `loc` (see ./computeScore.ts).
 // A top-level function keeps the kernel's locals out of a closure context.
-const calcScore = (
+export const calcScore = (
   errors: number,
   loc: number,
   patternLen: number,

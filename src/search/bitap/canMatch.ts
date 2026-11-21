@@ -1,4 +1,4 @@
-import type { BitapChunk } from './search'
+import { calcScore, type BitapChunk } from './search'
 
 // Sound reject filter for the bitap kernel. Myers' bit-vector algorithm, run
 // right to left with the chunk's alphabet as Peq, yields the exact minimum edit
@@ -55,19 +55,10 @@ export default function canMatch(
     mv = ph & xv
     if (ignoreLocation) {
       if (score < best) best = score
-    } else {
-      // Same formula as the kernel's calcScore.
-      const proximity = Math.abs(expected - j)
-      const accuracy = score / m
-      if (
-        (!distance
-          ? proximity
-            ? 1
-            : accuracy
-          : accuracy + proximity / distance) <= threshold
-      ) {
-        return 1
-      }
+    } else if (
+      calcScore(score, j, m, expected, distance, ignoreLocation) <= threshold
+    ) {
+      return 1
     }
   }
   // With ignoreLocation every start scores errors / m, so the kernel matches

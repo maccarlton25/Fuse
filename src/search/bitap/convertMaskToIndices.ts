@@ -6,25 +6,17 @@ export default function convertMaskToIndices(
 ): RangeTuple[] {
   const indices: RangeTuple[] = []
   let start = -1
-  let end = -1
-  let i = 0
 
-  for (let len = matchmask.length; i < len; i += 1) {
-    const match = matchmask[i]
-    if (match && start === -1) {
-      start = i
-    } else if (!match && start !== -1) {
-      end = i - 1
-      if (end - start + 1 >= minMatchCharLength) {
-        indices.push([start, end])
+  // Runs past the end read as undefined (falsy), which closes the last run.
+  for (let i = 0, len = matchmask.length; i <= len; i += 1) {
+    if (matchmask[i]) {
+      if (start < 0) start = i
+    } else if (start >= 0) {
+      if (i - start >= minMatchCharLength) {
+        indices.push([start, i - 1])
       }
       start = -1
     }
-  }
-
-  // (i-1 - start) + 1 => i - start
-  if (matchmask[i - 1] && i - start >= minMatchCharLength) {
-    indices.push([start, i - 1])
   }
 
   return indices

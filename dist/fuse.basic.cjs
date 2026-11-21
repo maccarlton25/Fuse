@@ -386,18 +386,12 @@ function parseIndex(data, { getFn = Config.getFn, fieldNormWeight = Config.field
 function convertMaskToIndices(matchmask, minMatchCharLength) {
 	const indices = [];
 	let start = -1;
-	let end = -1;
-	let i = 0;
-	for (let len = matchmask.length; i < len; i += 1) {
-		const match = matchmask[i];
-		if (match && start === -1) start = i;
-		else if (!match && start !== -1) {
-			end = i - 1;
-			if (end - start + 1 >= minMatchCharLength) indices.push([start, end]);
-			start = -1;
-		}
+	for (let i = 0, len = matchmask.length; i <= len; i += 1) if (matchmask[i]) {
+		if (start < 0) start = i;
+	} else if (start >= 0) {
+		if (i - start >= minMatchCharLength) indices.push([start, i - 1]);
+		start = -1;
 	}
-	if (matchmask[i - 1] && i - start >= minMatchCharLength) indices.push([start, i - 1]);
 	return indices;
 }
 
@@ -528,11 +522,7 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 		mv = ph & xv;
 		if (ignoreLocation) {
 			if (score < best) best = score;
-		} else {
-			const proximity = Math.abs(expected - j);
-			const accuracy = score / m;
-			if ((!distance ? proximity ? 1 : accuracy : accuracy + proximity / distance) <= threshold) return 1;
-		}
+		} else if (calcScore(score, j, m, expected, distance, ignoreLocation) <= threshold) return 1;
 	}
 	return best < m && best / m <= threshold ? ~best : 0;
 }
@@ -543,7 +533,7 @@ function createPatternAlphabet(pattern) {
 	const mask = {};
 	for (let i = 0, len = pattern.length; i < len; i += 1) {
 		const code = pattern.charCodeAt(i);
-		mask[code] = (mask[code] || 0) | 1 << len - i - 1;
+		mask[code] |= 1 << len - i - 1;
 	}
 	return mask;
 }
@@ -601,76 +591,54 @@ var BitapSearch = class {
 		pattern = ignoreDiacritics ? stripDiacritics(pattern) : pattern;
 		this.pattern = pattern;
 		this.chunks = [];
-		if (!this.pattern.length) return;
-		const addChunk = (pattern, startIndex) => {
-			const alphabet = createPatternAlphabet(pattern);
+		for (let i = 0, len = pattern.length; i < len; i += 32) {
+			const startIndex = Math.max(0, Math.min(i, len - 32));
+			const chunk = pattern.substr(startIndex, 32);
+			const alphabet = createPatternAlphabet(chunk);
 			this.chunks.push({
-				pattern,
+				pattern: chunk,
 				alphabet,
 				table: (/* @__PURE__ */ new Int32Array(256)).map((_, code) => alphabet[code]),
 				startIndex
 			});
-		};
-		const len = this.pattern.length;
-		if (len > 32) {
-			let i = 0;
-			const remainder = len % 32;
-			const end = len - remainder;
-			while (i < end) {
-				addChunk(this.pattern.substr(i, 32), i);
-				i += 32;
-			}
-			if (remainder) {
-				const startIndex = len - 32;
-				addChunk(this.pattern.substr(startIndex), startIndex);
-			}
-		} else addChunk(this.pattern, 0);
+		}
 	}
 	searchIn(text) {
-		const { isCaseSensitive, ignoreDiacritics, includeMatches } = this.options;
+		const { isCaseSensitive, ignoreDiacritics, includeMatches, location, ignoreLocation, minMatchCharLength } = this.options;
 		text = isCaseSensitive ? text : text.toLowerCase();
 		text = ignoreDiacritics ? stripDiacritics(text) : text;
-		if (this.pattern === text) {
-			if (text.length < this.options.minMatchCharLength) return {
-				isMatch: false,
-				score: 1
-			};
-			const result = {
-				isMatch: true,
-				score: 0
-			};
-			if (includeMatches) result.indices = [[0, text.length - 1]];
-			return result;
-		}
-		const { location, ignoreLocation, minMatchCharLength } = this.options;
-		const direct = ignoreLocation && !includeMatches && !(minMatchCharLength > 1);
-		const chunks = this.chunks;
-		let any = false;
-		let directScore = 0;
-		for (const chunk of chunks) {
-			const r = canMatch(text, chunk, this.options);
-			if (r) {
-				any = true;
-				if (!direct) break;
-				directScore += Math.max(.001, ~r / chunk.pattern.length);
-			} else directScore += 1;
-		}
-		if (!any) return {
+		if (this.pattern === text) return text.length < minMatchCharLength ? {
 			isMatch: false,
 			score: 1
-		};
-		if (direct) return {
+		} : includeMatches ? {
 			isMatch: true,
-			score: directScore / chunks.length
+			score: 0,
+			indices: [[0, text.length - 1]]
+		} : {
+			isMatch: true,
+			score: 0
 		};
-		const allIndices = [];
-		let totalScore = 0;
+		const direct = ignoreLocation && !includeMatches && !(minMatchCharLength > 1);
 		let hasMatches = false;
+		let totalScore = 0;
 		for (const chunk of this.chunks) {
-			const { isMatch, score, indices } = search(text, chunk, location + chunk.startIndex, this.options);
-			if (isMatch) hasMatches = true;
-			totalScore += score;
-			if (isMatch && indices) allIndices.push(...indices);
+			const r = canMatch(text, chunk, this.options);
+			if (r) {
+				hasMatches = true;
+				if (!direct) break;
+			}
+			totalScore += r ? Math.max(.001, ~r / chunk.pattern.length) : 1;
+		}
+		const allIndices = [];
+		if (hasMatches && !direct) {
+			hasMatches = false;
+			totalScore = 0;
+			for (const chunk of this.chunks) {
+				const { isMatch, score, indices } = search(text, chunk, location + chunk.startIndex, this.options);
+				if (isMatch) hasMatches = true;
+				totalScore += score;
+				if (isMatch && indices) allIndices.push(...indices);
+			}
 		}
 		const result = {
 			isMatch: hasMatches,

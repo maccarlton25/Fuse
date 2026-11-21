@@ -7,7 +7,7 @@ export default function createPatternAlphabet(
 
   for (let i = 0, len = pattern.length; i < len; i += 1) {
     const code = pattern.charCodeAt(i)
-    mask[code] = (mask[code] || 0) | (1 << (len - i - 1))
+    mask[code] |= 1 << (len - i - 1)
   }
 
   return mask
