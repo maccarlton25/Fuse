@@ -119,11 +119,31 @@ export default class BitapSearch {
     }
 
     // Otherwise, use Bitap algorithm
-    const { location } = this.options
+    const { location, ignoreLocation, minMatchCharLength } = this.options
 
-    // Cheap proof that no chunk can match: skip the kernel entirely.
-    if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) {
+    // One Myers pass per chunk (./canMatch.ts). No chunk can match: skip the
+    // kernel. With ignoreLocation and no indices needed (computeMatches false
+    // in the kernel), the pass also yields each chunk's exact kernel score.
+    const direct =
+      ignoreLocation && !includeMatches && !(minMatchCharLength > 1)
+    const chunks = this.chunks
+    let any = false
+    let directScore = 0
+    for (const chunk of chunks) {
+      const r = canMatch(text, chunk, this.options)
+      if (r) {
+        any = true
+        if (!direct) break
+        directScore += Math.max(0.001, ~r / chunk.pattern.length)
+      } else {
+        directScore += 1
+      }
+    }
+    if (!any) {
       return { isMatch: false, score: 1 }
+    }
+    if (direct) {
+      return { isMatch: true, score: directScore / chunks.length }
     }
 
     const allIndices: RangeTuple[] = []

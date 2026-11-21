@@ -500,6 +500,7 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 	let pv = -1;
 	let mv = 0;
 	let score = m;
+	let best = m;
 	while (j-- > stop) {
 		const c = text.charCodeAt(j);
 		const eq = table[c] ?? alphabet[c] | 0;
@@ -513,11 +514,15 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 		mh <<= 1;
 		pv = mh | ~(xv | ph);
 		mv = ph & xv;
-		const proximity = Math.abs(expected - j);
-		const accuracy = score / m;
-		if ((ignoreLocation ? accuracy : !distance ? proximity ? 1 : accuracy : accuracy + proximity / distance) <= threshold) return true;
+		if (ignoreLocation) {
+			if (score < best) best = score;
+		} else {
+			const proximity = Math.abs(expected - j);
+			const accuracy = score / m;
+			if ((!distance ? proximity ? 1 : accuracy : accuracy + proximity / distance) <= threshold) return 1;
+		}
 	}
-	return false;
+	return best < m && best / m <= threshold ? ~best : 0;
 }
 
 //#endregion
@@ -625,10 +630,26 @@ var BitapSearch = class {
 			if (includeMatches) result.indices = [[0, text.length - 1]];
 			return result;
 		}
-		const { location } = this.options;
-		if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) return {
+		const { location, ignoreLocation, minMatchCharLength } = this.options;
+		const direct = ignoreLocation && !includeMatches && !(minMatchCharLength > 1);
+		const chunks = this.chunks;
+		let any = false;
+		let directScore = 0;
+		for (const chunk of chunks) {
+			const r = canMatch(text, chunk, this.options);
+			if (r) {
+				any = true;
+				if (!direct) break;
+				directScore += Math.max(.001, ~r / chunk.pattern.length);
+			} else directScore += 1;
+		}
+		if (!any) return {
 			isMatch: false,
 			score: 1
+		};
+		if (direct) return {
+			isMatch: true,
+			score: directScore / chunks.length
 		};
 		const allIndices = [];
 		let totalScore = 0;

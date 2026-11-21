@@ -5,7 +5,8 @@ import type { BitapChunk } from './search'
 // count D(p) for an occurrence starting at each text position p. Bitap only
 // accepts a hit at level i >= D(p) scoring <= threshold (positions past the
 // text end only cost edits), so when no p passes with D(p) the kernel cannot
-// match. Returns false only in that case; true is always a safe answer.
+// match. Returns 0 only in that case; nonzero is always a safe answer. With
+// ignoreLocation the nonzero answer is ~(minimum edit count), see below.
 export default function canMatch(
   text: string,
   { pattern, alphabet, table, startIndex }: BitapChunk,
@@ -20,7 +21,7 @@ export default function canMatch(
     threshold: number
     ignoreLocation: boolean
   }
-): boolean {
+): number {
   const n = text.length
   const m = pattern.length
   const expected = Math.max(0, Math.min(location + startIndex, n))
@@ -38,6 +39,7 @@ export default function canMatch(
   let pv = -1
   let mv = 0
   let score = m
+  let best = m
   while (j-- > stop) {
     const c = text.charCodeAt(j)
     const eq = table[c] ?? alphabet[c] | 0
@@ -51,20 +53,26 @@ export default function canMatch(
     mh <<= 1
     pv = mh | ~(xv | ph)
     mv = ph & xv
-    // Same formula as the kernel's calcScore.
-    const proximity = Math.abs(expected - j)
-    const accuracy = score / m
-    if (
-      (ignoreLocation
-        ? accuracy
-        : !distance
+    if (ignoreLocation) {
+      if (score < best) best = score
+    } else {
+      // Same formula as the kernel's calcScore.
+      const proximity = Math.abs(expected - j)
+      const accuracy = score / m
+      if (
+        (!distance
           ? proximity
             ? 1
             : accuracy
           : accuracy + proximity / distance) <= threshold
-    ) {
-      return true
+      ) {
+        return 1
+      }
     }
   }
-  return false
+  // With ignoreLocation every start scores errors / m, so the kernel matches
+  // iff the minimum edit count `best` over all starts is below m and scores
+  // <= threshold; it then reports exactly best / m. Return ~best (always
+  // truthy) so the caller can answer without the kernel.
+  return best < m && best / m <= threshold ? ~best : 0
 }
