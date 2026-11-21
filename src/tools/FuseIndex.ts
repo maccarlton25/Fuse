@@ -82,11 +82,13 @@ export default class FuseIndex<T = any> {
       const template: Record<number, undefined> = {}
       for (let k = 0; k < this.keys.length; k++) template[k] = undefined
       for (let i = 0; i < len; i++) {
-        this.records[recordCount++] = this._createObjectRecord(
-          this.docs[i],
-          i,
-          { ...template }
-        )
+        this.records[recordCount++] = (
+          this._createObjectRecord as (
+            doc: any,
+            docIndex: number,
+            $: Record<number, undefined>
+          ) => IndexRecord
+        )(this.docs[i], i, { ...template })
       }
     }
 
@@ -192,6 +194,9 @@ export default class FuseIndex<T = any> {
       n: this.norm.get(doc)
     }
   }
+  // The declared signature stays (doc, docIndex); create() also passes the
+  // record's starting `$`.
+  _createObjectRecord(doc: any, docIndex: number): IndexRecord
   _createObjectRecord(
     doc: any,
     docIndex: number,

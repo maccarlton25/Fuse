@@ -312,7 +312,7 @@ declare class FuseIndex<T = any> {
   getValueForItemAtKeyId(item: any, keyId: string): any;
   size(): number;
   _createStringRecord(doc: string, docIndex: number): IndexRecord | null;
-  _createObjectRecord(doc: any, docIndex: number, $?: Record<number, SubRecord | SubRecord[] | undefined>): IndexRecord;
+  _createObjectRecord(doc: any, docIndex: number): IndexRecord;
   toJSON(): {
     keys: ReadonlyArray<Omit<KeyObject, 'getFn'>>;
     records: IndexRecord[];
