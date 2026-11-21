@@ -1097,7 +1097,7 @@ var MaxHeap = class {
 function formatMatches(result) {
 	const matches = [];
 	result.matches.forEach((match) => {
-		if (!isDefined(match.indices) || !match.indices.length) return;
+		if (!match.indices?.length) return;
 		const obj = {
 			indices: match.indices,
 			value: match.value
@@ -1111,7 +1111,7 @@ function formatMatches(result) {
 
 //#endregion
 //#region src/core/format.ts
-function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore } = {}) {
+function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore }) {
 	return results.map((result) => {
 		const { idx } = result;
 		const data = {
@@ -1166,14 +1166,7 @@ var TokenSearch = class {
 		this.idfWeights = [];
 		for (const term of queryTerms) {
 			this.termSearchers.push(new BitapSearch(term, {
-				location: options.location,
-				threshold: options.threshold,
-				distance: options.distance,
-				includeMatches: options.includeMatches,
-				findAllMatches: options.findAllMatches,
-				minMatchCharLength: options.minMatchCharLength,
-				isCaseSensitive: options.isCaseSensitive,
-				ignoreDiacritics: options.ignoreDiacritics,
+				...options,
 				ignoreLocation: true
 			}));
 			const docFreq = df.get(term) || 0;
@@ -1181,14 +1174,9 @@ var TokenSearch = class {
 			this.idfWeights.push(idf);
 		}
 		this.combineAll = options.tokenMatch === "all";
-		this.numTerms = this.termSearchers.length;
-		this.useMask = this.numTerms <= 31;
+		this.useMask = this.termSearchers.length <= 31;
 	}
 	searchIn(text) {
-		if (!this.termSearchers.length) return {
-			isMatch: false,
-			score: 1
-		};
 		const allIndices = [];
 		let weightedScore = 0;
 		let maxPossibleScore = 0;
@@ -1220,7 +1208,7 @@ var TokenSearch = class {
 		if (this.combineAll) {
 			if (this.useMask) searchResult.matchedMask = matchedMask;
 			else searchResult.matchedTerms = matchedTerms;
-			searchResult.termCount = this.numTerms;
+			searchResult.termCount = this.termSearchers.length;
 		}
 		return searchResult;
 	}

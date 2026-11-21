@@ -764,7 +764,7 @@ var MaxHeap = class {
 function formatMatches(result) {
 	const matches = [];
 	result.matches.forEach((match) => {
-		if (!isDefined(match.indices) || !match.indices.length) return;
+		if (!match.indices?.length) return;
 		const obj = {
 			indices: match.indices,
 			value: match.value
@@ -778,7 +778,7 @@ function formatMatches(result) {
 
 //#endregion
 //#region src/core/format.ts
-function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore } = {}) {
+function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore }) {
 	return results.map((result) => {
 		const { idx } = result;
 		const data = {

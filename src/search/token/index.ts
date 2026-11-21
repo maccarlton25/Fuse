@@ -20,7 +20,6 @@ export default class TokenSearch {
   // coverage of every term. Bitmask is the ≤31-term fast path; Set is the
   // ≥32-term fallback (JS bitwise ops are 32-bit signed).
   private combineAll: boolean
-  private numTerms: number
   private useMask: boolean
 
   static condition(_: string, options: any): boolean {
@@ -44,17 +43,8 @@ export default class TokenSearch {
 
     for (const term of queryTerms) {
       this.termSearchers.push(
-        new BitapSearch(term, {
-          location: options.location,
-          threshold: options.threshold,
-          distance: options.distance,
-          includeMatches: options.includeMatches,
-          findAllMatches: options.findAllMatches,
-          minMatchCharLength: options.minMatchCharLength,
-          isCaseSensitive: options.isCaseSensitive,
-          ignoreDiacritics: options.ignoreDiacritics,
-          ignoreLocation: true
-        })
+        // BitapSearch reads only its own option names from this object.
+        new BitapSearch(term, { ...options, ignoreLocation: true })
       )
 
       const docFreq = df.get(term) || 0
@@ -63,15 +53,12 @@ export default class TokenSearch {
     }
 
     this.combineAll = options.tokenMatch === 'all'
-    this.numTerms = this.termSearchers.length
-    this.useMask = this.numTerms <= MAX_MASK_TERMS
+    this.useMask = this.termSearchers.length <= MAX_MASK_TERMS
   }
 
   searchIn(text: string): SearchResult {
-    if (!this.termSearchers.length) {
-      return { isMatch: false, score: 1 }
-    }
-
+    // No query terms: the loop below never runs and the no-match result is
+    // returned.
     const allIndices: RangeTuple[] = []
     let weightedScore = 0
     let maxPossibleScore = 0
@@ -130,7 +117,7 @@ export default class TokenSearch {
       } else {
         searchResult.matchedTerms = matchedTerms!
       }
-      searchResult.termCount = this.numTerms
+      searchResult.termCount = this.termSearchers.length
     }
 
     return searchResult
