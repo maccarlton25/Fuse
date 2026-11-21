@@ -152,25 +152,19 @@ function get(obj, path) {
 
 //#endregion
 //#region src/core/config.ts
-const MatchOptions = {
-	includeMatches: false,
-	findAllMatches: false,
-	minMatchCharLength: 1
-};
-const BasicOptions = {
+const Config = Object.freeze({
 	isCaseSensitive: false,
 	ignoreDiacritics: false,
 	includeScore: false,
 	keys: [],
 	shouldSort: true,
-	sortFn: (a, b) => a.score === b.score ? a.idx < b.idx ? -1 : 1 : a.score < b.score ? -1 : 1
-};
-const FuzzyOptions = {
+	sortFn: (a, b) => a.score === b.score ? a.idx < b.idx ? -1 : 1 : a.score < b.score ? -1 : 1,
+	includeMatches: false,
+	findAllMatches: false,
+	minMatchCharLength: 1,
 	location: 0,
 	threshold: .6,
-	distance: 100
-};
-const AdvancedOptions = {
+	distance: 100,
 	useExtendedSearch: false,
 	useTokenSearch: false,
 	tokenize: void 0,
@@ -179,12 +173,6 @@ const AdvancedOptions = {
 	ignoreLocation: false,
 	ignoreFieldNorm: false,
 	fieldNormWeight: 1
-};
-const Config = Object.freeze({
-	...BasicOptions,
-	...MatchOptions,
-	...FuzzyOptions,
-	...AdvancedOptions
 });
 
 //#endregion
