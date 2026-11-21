@@ -634,148 +634,114 @@ function isInverse(type) {
 	return type.startsWith("inverse");
 }
 const FUZZY_OPTION_KEYS = "location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation".split(" ");
+const def = (type, prefix, suffix, create) => ({
+	type,
+	multiRegex: new RegExp(`^${prefix}"(.*)"${suffix}$`),
+	singleRegex: new RegExp(`^${prefix}(.*)${suffix}$`),
+	create
+});
 const matchers = [
-	{
+	def("exact", "=", "", (pattern) => ({
 		type: "exact",
-		multiRegex: /^="(.*)"$/,
-		singleRegex: /^=(.*)$/,
-		create: (pattern) => ({
-			type: "exact",
-			search(text) {
-				const isMatch = text === pattern;
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [0, pattern.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "include",
-		multiRegex: /^'"(.*)"$/,
-		singleRegex: /^'(.*)$/,
-		create: (pattern) => ({
-			type: "include",
-			search(text) {
-				let location = 0;
-				let index;
-				const indices = [];
-				const patternLen = pattern.length;
-				if (!patternLen) return {
-					isMatch: false,
-					score: 1,
-					indices
-				};
-				while ((index = text.indexOf(pattern, location)) > -1) {
-					location = index + patternLen;
-					indices.push([index, location - 1]);
-				}
-				const isMatch = !!indices.length;
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices
-				};
-			}
-		})
-	},
-	{
-		type: "prefix-exact",
-		multiRegex: /^\^"(.*)"$/,
-		singleRegex: /^\^(.*)$/,
-		create: (pattern) => ({
-			type: "prefix-exact",
-			search(text) {
-				const isMatch = text.startsWith(pattern);
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [0, pattern.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "inverse-prefix-exact",
-		multiRegex: /^!\^"(.*)"$/,
-		singleRegex: /^!\^(.*)$/,
-		create: (pattern) => ({
-			type: "inverse-prefix-exact",
-			search(text) {
-				const isMatch = !text.startsWith(pattern);
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [0, text.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "inverse-suffix-exact",
-		multiRegex: /^!"(.*)"\$$/,
-		singleRegex: /^!(.*)\$$/,
-		create: (pattern) => ({
-			type: "inverse-suffix-exact",
-			search(text) {
-				const isMatch = !text.endsWith(pattern);
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [0, text.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "suffix-exact",
-		multiRegex: /^"(.*)"\$$/,
-		singleRegex: /^(.*)\$$/,
-		create: (pattern) => ({
-			type: "suffix-exact",
-			search(text) {
-				const isMatch = text.endsWith(pattern);
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [text.length - pattern.length, text.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "inverse-exact",
-		multiRegex: /^!"(.*)"$/,
-		singleRegex: /^!(.*)$/,
-		create: (pattern) => ({
-			type: "inverse-exact",
-			search(text) {
-				const isMatch = text.indexOf(pattern) === -1;
-				return {
-					isMatch,
-					score: isMatch ? 0 : 1,
-					indices: [0, text.length - 1]
-				};
-			}
-		})
-	},
-	{
-		type: "fuzzy",
-		multiRegex: /^"(.*)"$/,
-		singleRegex: /^(.*)$/,
-		create: (pattern, options = {}) => {
-			const resolved = {};
-			for (const key of FUZZY_OPTION_KEYS) resolved[key] = options[key] ?? Config[key];
-			const bitap = new BitapSearch(pattern, resolved);
+		search(text) {
+			const isMatch = text === pattern;
 			return {
-				type: "fuzzy",
-				search(text) {
-					return bitap.searchIn(text);
-				}
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [0, pattern.length - 1]
 			};
 		}
-	}
+	})),
+	def("include", "'", "", (pattern) => ({
+		type: "include",
+		search(text) {
+			let location = 0;
+			let index;
+			const indices = [];
+			const patternLen = pattern.length;
+			if (!patternLen) return {
+				isMatch: false,
+				score: 1,
+				indices
+			};
+			while ((index = text.indexOf(pattern, location)) > -1) {
+				location = index + patternLen;
+				indices.push([index, location - 1]);
+			}
+			const isMatch = !!indices.length;
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices
+			};
+		}
+	})),
+	def("prefix-exact", "\\^", "", (pattern) => ({
+		type: "prefix-exact",
+		search(text) {
+			const isMatch = text.startsWith(pattern);
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [0, pattern.length - 1]
+			};
+		}
+	})),
+	def("inverse-prefix-exact", "!\\^", "", (pattern) => ({
+		type: "inverse-prefix-exact",
+		search(text) {
+			const isMatch = !text.startsWith(pattern);
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [0, text.length - 1]
+			};
+		}
+	})),
+	def("inverse-suffix-exact", "!", "\\$", (pattern) => ({
+		type: "inverse-suffix-exact",
+		search(text) {
+			const isMatch = !text.endsWith(pattern);
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [0, text.length - 1]
+			};
+		}
+	})),
+	def("suffix-exact", "", "\\$", (pattern) => ({
+		type: "suffix-exact",
+		search(text) {
+			const isMatch = text.endsWith(pattern);
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [text.length - pattern.length, text.length - 1]
+			};
+		}
+	})),
+	def("inverse-exact", "!", "", (pattern) => ({
+		type: "inverse-exact",
+		search(text) {
+			const isMatch = text.indexOf(pattern) === -1;
+			return {
+				isMatch,
+				score: isMatch ? 0 : 1,
+				indices: [0, text.length - 1]
+			};
+		}
+	})),
+	def("fuzzy", "", "", (pattern, options = {}) => {
+		const resolved = {};
+		for (const key of FUZZY_OPTION_KEYS) resolved[key] = options[key] ?? Config[key];
+		const bitap = new BitapSearch(pattern, resolved);
+		return {
+			type: "fuzzy",
+			search(text) {
+				return bitap.searchIn(text);
+			}
+		};
+	})
 ];
 const OPERATOR_TO_TYPE = {
 	$fuzzy: "fuzzy",
