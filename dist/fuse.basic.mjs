@@ -381,20 +381,6 @@ function parseIndex(data, { getFn = Config.getFn, fieldNormWeight = Config.field
 }
 
 //#endregion
-//#region src/search/bitap/convertMaskToIndices.ts
-function convertMaskToIndices(matchmask, minMatchCharLength) {
-	const indices = [];
-	let start = -1;
-	for (let i = 0, len = matchmask.length; i <= len; i += 1) if (matchmask[i]) {
-		if (start < 0) start = i;
-	} else if (start >= 0) {
-		if (i - start >= minMatchCharLength) indices.push([start, i - 1]);
-		start = -1;
-	}
-	return indices;
-}
-
-//#endregion
 //#region src/search/bitap/search.ts
 const KEEP = 3e4;
 let bufA = /* @__PURE__ */ new Int32Array(0);
@@ -417,8 +403,7 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 	const matchMask = new Uint8Array(computeMatches ? textLen : 0);
 	let index;
 	while ((index = text.indexOf(pattern, bestLocation)) > -1) {
-		const score = calcScore(0, index, patternLen, expectedLocation, distance, ignoreLocation);
-		currentThreshold = Math.min(score, currentThreshold);
+		currentThreshold = Math.min(calcScore(0, index, patternLen, expectedLocation, distance, ignoreLocation), currentThreshold);
 		bestLocation = index + patternLen;
 		if (computeMatches) matchMask.fill(1, index, bestLocation);
 	}
@@ -491,7 +476,13 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 		score: Math.max(.001, finalScore)
 	};
 	if (computeMatches) {
-		const indices = convertMaskToIndices(matchMask, minMatchCharLength);
+		const indices = [];
+		for (let k = 0, start = -1; k <= textLen; k += 1) if (matchMask[k]) {
+			if (start < 0) start = k;
+		} else if (start >= 0) {
+			if (k - start >= minMatchCharLength) indices.push([start, k - 1]);
+			start = -1;
+		}
 		if (!indices.length) result.isMatch = false;
 		else if (includeMatches) result.indices = indices;
 	}

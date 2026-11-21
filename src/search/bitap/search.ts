@@ -1,5 +1,4 @@
-import convertMaskToIndices from './convertMaskToIndices'
-import type { SearchResult } from '../../types'
+import type { RangeTuple, SearchResult } from '../../types'
 
 export interface BitapChunk {
   pattern: string
@@ -79,16 +78,17 @@ export default function search(
 
   // Get all exact matches, here for speed up
   while ((index = text.indexOf(pattern, bestLocation)) > -1) {
-    const score = calcScore(
-      0,
-      index,
-      patternLen,
-      expectedLocation,
-      distance,
-      ignoreLocation
+    currentThreshold = Math.min(
+      calcScore(
+        0,
+        index,
+        patternLen,
+        expectedLocation,
+        distance,
+        ignoreLocation
+      ),
+      currentThreshold
     )
-
-    currentThreshold = Math.min(score, currentThreshold)
     bestLocation = index + patternLen
 
     if (computeMatches) {
@@ -253,7 +253,17 @@ export default function search(
   }
 
   if (computeMatches) {
-    const indices = convertMaskToIndices(matchMask, minMatchCharLength)
+    // Runs of set mask positions of at least minMatchCharLength (the undefined
+    // read past the end closes the last run; formerly ./convertMaskToIndices.ts).
+    const indices: RangeTuple[] = []
+    for (let k = 0, start = -1; k <= textLen; k += 1) {
+      if (matchMask[k]) {
+        if (start < 0) start = k
+      } else if (start >= 0) {
+        if (k - start >= minMatchCharLength) indices.push([start, k - 1])
+        start = -1
+      }
+    }
     if (!indices.length) {
       result.isMatch = false
     } else if (includeMatches) {
