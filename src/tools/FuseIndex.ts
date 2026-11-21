@@ -154,9 +154,14 @@ export default class FuseIndex<T = any> {
   // indices"; asymmetric throw-vs-no-op would be more surprising than a clean
   // filter.
   removeAll(indices: number[]): void {
-    const sorted = Array.from(
-      new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))
-    ).sort((a, b) => a - b)
+    // Any iterable is accepted, as in the baseline's `for...of`.
+    const toRemove = new Set<number>()
+    for (const v of indices) {
+      if (Number.isInteger(v) && v >= 0) {
+        toRemove.add(v)
+      }
+    }
+    const sorted = Array.from(toRemove).sort((a, b) => a - b)
 
     if (!sorted.length) {
       return

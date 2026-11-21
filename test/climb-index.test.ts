@@ -518,3 +518,26 @@ describe('inlined default getFn on one-segment keys matches the baseline', () =>
     expect(run(Fuse)).toBe(run(BaselineFuse))
   })
 })
+
+describe('FuseIndex.removeAll accepts any iterable, like the baseline (D1)', () => {
+  const strs = ['a0', 'b1', 'c2', 'd3', 'e4']
+  function* gen() {
+    yield 3
+    yield 1
+    yield 3
+  }
+  test.each([
+    ['Set', () => new Set([1, 2])],
+    ['generator', () => gen()],
+    ['Int32Array', () => new Int32Array([4, 0])],
+    ['Float64Array', () => new Float64Array([1.5, 2, -1])],
+    ['Map keys', () => new Map([[0, 'x'], [2, 'y']]).keys()],
+    ['string', () => '12']
+  ])('%s', (_name, make) => {
+    const a = Fuse.createIndex([], strs)
+    const b = BaselineFuse.createIndex([], strs)
+    a.removeAll(make() as any)
+    b.removeAll(make() as any)
+    expect(JSON.stringify(a.toJSON())).toBe(JSON.stringify(b.toJSON()))
+  })
+})

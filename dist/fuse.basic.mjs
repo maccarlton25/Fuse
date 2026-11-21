@@ -266,7 +266,9 @@ var FuseIndex = class {
 		for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i > idx) this.records[i].i -= 1;
 	}
 	removeAll(indices) {
-		const sorted = Array.from(new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))).sort((a, b) => a - b);
+		const toRemove = /* @__PURE__ */ new Set();
+		for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
+		const sorted = Array.from(toRemove).sort((a, b) => a - b);
 		if (!sorted.length) return;
 		this.records = this.records.filter((record) => {
 			let lo = 0;
