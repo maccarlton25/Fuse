@@ -22,7 +22,7 @@ preserved. `dist/` conflicted on every merge and was resolved with a fresh
 | `climb/gen1-topk` | `817d177` | `msg_c1c3ecdc…` | ACCEPT WITH FOLLOW-UPS | Yes, merge `3cc2872` |
 | `climb/gen1-index` | `50f51ab` | `msg_4ae5137d…` | **REJECT** | **No** (see below) |
 | `climb/gen1-prefilter` | `1999404` | — | REJECT (slowdown on long fields) | **No**, fix in progress, to be ported in gen 2 |
-| `climb/base` | `7d6e386`, then `43c7ec5` | — | — | Yes, merges `a57e9c4` (field-length probe) and `4ebe6a2` (retention probe) |
+| `climb/base` | `7d6e386`, `43c7ec5`, `28cc81e` | — | — | Yes, merges `a57e9c4` (field-length probe), `4ebe6a2` (retention probe) and `47cd638` (fuzzer rev 2) |
 
 **Why `climb/gen1-index` was left out.** The reviewer confirmed a parity divergence in
 `Fuse.remove` (commit `50f51ab`). The new cursor filter
@@ -169,6 +169,42 @@ grow with the longest text scanned and are never released). Bitap was not
 left out: its review verdict is ACCEPT WITH FOLLOW-UPS and the probe is not in
 this task's gate. Fixing the buffers so this probe passes is the first item
 for generation 2.
+
+### Addendum 2: parity fuzzer rev 2 (third `climb/base` merge)
+
+`climb/base` moved again, to `28cc81e` ("chore(bench): parity fuzzer rev 2,
+sparse arrays and out-of-range options"). Merge `47cd638` brings it in, with no
+`src/` or `dist/` change (gzip still 10269 B).
+
+The gate's fuzzer step now **fails on `climb/gen1-best`**. Each run below is
+`node bench/parity-fuzz.mjs --iters 400 --seed N`, checked against the
+committed `dist/fuse.mjs` of each merge step:
+
+| tree | seeds 51–54 (rev 2) |
+|---|---|
+| `041968d` bitap | OK, OK, OK, OK |
+| `004d068` + extended | OK, OK, OK, OK |
+| `3cc2872` + topk | FAIL ×4 (`parseIndex` step) |
+| `47cd638` with `--no-sparse-records` | OK ×4 (comparisons 5496 / 5380 / 5516 / 5491) |
+
+Repro:
+
+```
+PARITY_FUZZ_FAIL at case 0 (seed=51, caseSeed=51000153) step 11: parseIndex
+  options: {"includeScore":true,"ignoreLocation":true,"findAllMatches":true,"threshold":0.2,"distance":0}
+  baseline : …[]
+  candidate: …THROW:Cannot read properties of undefined (reading 'v')
+```
+
+This is topk follow-up 1. `for…of` over index `records` throws on holes, where
+the baseline's `forEach` skipped them. Commit `28cc81e` says the fix is
+assigned to `climb/gen2-core`, and that `--no-sparse-records` is for branches
+forked from this tree until the fix lands.
+
+`climb/gen1-topk` is therefore **still in** `climb/gen1-best`. It has not been
+reverted, and the branch has not been rewritten. That is a decision for the lead.
+Topk's measured speed gain is within noise, and its only certain gain is −9 B
+gzip. Bitap + extended alone (`004d068`) pass rev 2 on all four seeds.
 
 ### Open follow-ups from the reviews (not implemented here)
 
