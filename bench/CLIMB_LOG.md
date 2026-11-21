@@ -22,7 +22,7 @@ preserved. `dist/` conflicted on every merge and was resolved with a fresh
 | `climb/gen1-topk` | `817d177` | `msg_c1c3ecdc…` | ACCEPT WITH FOLLOW-UPS | Yes, merge `3cc2872` |
 | `climb/gen1-index` | `50f51ab` | `msg_4ae5137d…` | **REJECT** | **No** (see below) |
 | `climb/gen1-prefilter` | `1999404` | — | REJECT (slowdown on long fields) | **No**, fix in progress, to be ported in gen 2 |
-| `climb/base` | `7d6e386` | — | — | Yes, merge `a57e9c4` (brings `bench/field-length-probe.mjs`) |
+| `climb/base` | `7d6e386`, then `43c7ec5` | — | — | Yes, merges `a57e9c4` (field-length probe) and `4ebe6a2` (retention probe) |
 
 **Why `climb/gen1-index` was left out.** The reviewer confirmed a parity divergence in
 `Fuse.remove` (commit `50f51ab`). The new cursor filter
@@ -132,6 +132,43 @@ with caution. The final library code is identical at "+ topk" and "+ base".
 - of the 429 B shared gen-1 budget, 70 B is used.
 
 Per merge: 10286 B (bitap), then 10278 B (+extended, −8), then 10269 B (+topk, −9), then 10269 B (+base, ±0).
+
+### Addendum: second `climb/base` merge and the retention probe
+
+After the first base merge (`a57e9c4`), `climb/base` moved to `43c7ec5`
+("chore(bench): add retention probe for memory held after large searches").
+Merge `4ebe6a2` brings that commit in. It changes no `src/` or `dist/` (a
+fresh build is byte-identical, gzip still 10269 B) and `npm test` is still
+24 files / 489 tests. The five verifier runs above were taken on identical
+library code.
+
+`bench/retention-probe.mjs` is not part of the gen 1 crossover gate, but it
+**fails on `climb/gen1-best`**:
+
+```
+$ node --expose-gc bench/retention-probe.mjs
+retention probe: candidate=../dist/fuse.mjs chars=5000000 max-retained-mb=4
+            heap MB  buffers MB   hits
+baseline       4.86       0.00     10
+candidate      4.86     114.44     10
+candidate retains -0.01 MB heap and 114.44 MB ArrayBuffer more than baseline
+RETENTION_PROBE_FAIL
+```
+
+Bisect over committed `dist/fuse.mjs` (`--candidate`):
+
+| tree | result |
+|---|---|
+| `origin/climb/base` `43c7ec5` | RETENTION_PROBE_OK (0.00 MB) |
+| `origin/climb/gen1-bitap` `041968d` | RETENTION_PROBE_FAIL (114.44 MB) |
+| `004d068` (+extended) | FAIL (114.44 MB) |
+| `3cc2872` (+topk) | FAIL (114.44 MB) |
+
+The cause is bitap follow-up 1 (module-level `bufA`/`bufB`/`charBuf` that
+grow with the longest text scanned and are never released). Bitap was not
+left out: its review verdict is ACCEPT WITH FOLLOW-UPS and the probe is not in
+this task's gate. Fixing the buffers so this probe passes is the first item
+for generation 2.
 
 ### Open follow-ups from the reviews (not implemented here)
 
