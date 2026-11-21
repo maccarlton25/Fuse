@@ -240,7 +240,6 @@ export default class Fuse<T> {
         removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove)
       }
 
-      // Filter docs in a single pass instead of reverse-splicing
       const toRemove = new Set(indicesToRemove)
       this._docs = this._docs.filter((_, i) => !toRemove.has(i))
       this._myIndex.removeAll(indicesToRemove)

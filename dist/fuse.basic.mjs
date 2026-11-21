@@ -7,9 +7,7 @@
  * http://www.apache.org/licenses/LICENSE-2.0
  */
 //#region src/helpers/typeGuards.ts
-function isArray(value) {
-	return !Array.isArray ? getTag(value) === "[object Array]" : Array.isArray(value);
-}
+const isArray = Array.isArray;
 function baseToString(value) {
 	if (typeof value == "string") return value;
 	if (typeof value === "bigint") return value.toString();
@@ -124,30 +122,32 @@ function createKeyId(key) {
 
 //#endregion
 //#region src/helpers/get.ts
-function get(obj, path) {
-	const list = [];
-	let arr = false;
-	const deepGet = (obj, path, index, arrayIndex) => {
-		if (!isDefined(obj)) return;
-		if (!path[index]) list.push(arrayIndex !== void 0 ? {
-			v: obj,
-			i: arrayIndex
-		} : obj);
-		else {
-			const value = obj[path[index]];
-			if (!isDefined(value)) return;
-			if (index === path.length - 1 && (isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint")) list.push(arrayIndex !== void 0 ? {
-				v: toString(value),
-				i: arrayIndex
-			} : toString(value));
-			else if (isArray(value)) {
-				arr = true;
-				for (let i = 0, len = value.length; i < len; i += 1) deepGet(value[i], path, index + 1, i);
-			} else if (path.length) deepGet(value, path, index + 1, arrayIndex);
+const isLeaf$1 = (value) => isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint";
+function walk(obj, path, index, list, arrayIndex) {
+	for (;; index++) {
+		if (!isDefined(obj)) return list;
+		if (!path[index]) break;
+		const value = obj[path[index]];
+		if (index === path.length - 1 && isLeaf$1(value)) {
+			obj = toString(value);
+			break;
 		}
-	};
-	deepGet(obj, isString(path) ? path.split(".") : path, 0);
-	return arr ? list : list[0];
+		if (isArray(value)) {
+			list = list || [];
+			for (let i = 0, len = value.length; i < len; i += 1) walk(value[i], path, index + 1, list, i);
+			return list;
+		}
+		obj = value;
+	}
+	if (!list) return obj;
+	list.push({
+		v: obj,
+		i: arrayIndex
+	});
+	return list;
+}
+function get(obj, path) {
+	return walk(obj, isString(path) ? path.split(".") : path, 0);
 }
 
 //#endregion
@@ -177,30 +177,28 @@ const Config = Object.freeze({
 
 //#endregion
 //#region src/tools/fieldNorm.ts
-function isWordSeparator(code) {
-	return code >= 9 && code <= 13 || code === 32 || code === 160;
-}
+const RARE_SEPARATORS = /[\t-\r\xa0]/;
 function norm(weight = 1, mantissa = 3) {
-	const cache = /* @__PURE__ */ new Map();
+	let cache = [];
 	const m = Math.pow(10, mantissa);
 	return {
 		get(value) {
+			const rare = RARE_SEPARATORS.test(value);
 			let numTokens = 0;
-			let inWord = false;
-			for (let i = 0; i < value.length; i++) if (!isWordSeparator(value.charCodeAt(i))) {
-				if (!inWord) {
+			for (let i = 0, inWord = false, len = value.length; i < len; i++) {
+				const c = value.charCodeAt(i);
+				if (c > 32 ? c === 160 : c === 32 || c > 8 && c < 14) inWord = false;
+				else if (!inWord) {
 					numTokens++;
-					inWord = true;
+					inWord = rare;
+					if (!rare && (i = value.indexOf(" ", i)) < 0) break;
 				}
-			} else inWord = false;
-			if (numTokens === 0) numTokens = 1;
-			if (cache.has(numTokens)) return cache.get(numTokens);
-			const n = Math.round(m / Math.pow(numTokens, .5 * weight)) / m;
-			cache.set(numTokens, n);
-			return n;
+			}
+			numTokens = numTokens || 1;
+			return cache[numTokens] || (cache[numTokens] = Math.round(m / Math.pow(numTokens, .5 * weight)) / m);
 		},
 		clear() {
-			cache.clear();
+			cache = [];
 		}
 	};
 }
@@ -240,7 +238,11 @@ var FuseIndex = class {
 			const record = this._createStringRecord(this.docs[i], i);
 			if (record) this.records[recordCount++] = record;
 		}
-		else for (let i = 0; i < len; i++) this.records[recordCount++] = this._createObjectRecord(this.docs[i], i);
+		else {
+			const template = {};
+			for (let k = 0; k < this.keys.length; k++) template[k] = void 0;
+			for (let i = 0; i < len; i++) this.records[recordCount++] = this._createObjectRecord(this.docs[i], i, { ...template });
+		}
 		this.records.length = recordCount;
 		this.norm.clear();
 	}
@@ -264,12 +266,9 @@ var FuseIndex = class {
 		for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i > idx) this.records[i].i -= 1;
 	}
 	removeAll(indices) {
-		const toRemove = /* @__PURE__ */ new Set();
-		for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
-		if (toRemove.size === 0) return;
-		this.records = this.records.filter((r) => !toRemove.has(r.i));
-		const sorted = Array.from(toRemove).sort((a, b) => a - b);
-		for (const record of this.records) {
+		const sorted = Array.from(new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))).sort((a, b) => a - b);
+		if (!sorted.length) return;
+		this.records = this.records.filter((record) => {
 			let lo = 0;
 			let hi = sorted.length;
 			while (lo < hi) {
@@ -277,8 +276,10 @@ var FuseIndex = class {
 				if (sorted[mid] < record.i) lo = mid + 1;
 				else hi = mid;
 			}
+			if (sorted[lo] === record.i) return false;
 			record.i -= lo;
-		}
+			return true;
+		});
 	}
 	getValueForItemAtKeyId(item, keyId) {
 		return item[this._keysMap[keyId]];
@@ -294,51 +295,51 @@ var FuseIndex = class {
 			n: this.norm.get(doc)
 		};
 	}
-	_createObjectRecord(doc, docIndex) {
-		const record = {
-			i: docIndex,
-			$: {}
-		};
+	_createObjectRecord(doc, docIndex, $ = {}) {
 		for (let keyIndex = 0, keyLen = this.keys.length; keyIndex < keyLen; keyIndex++) {
 			const key = this.keys[keyIndex];
-			const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path);
-			if (!isDefined(value)) continue;
+			const path = key.path;
+			let value;
+			if (key.getFn) value = key.getFn(doc);
+			else if (this.getFn !== get || path.length > 1 || !path[0]) value = this.getFn(doc, path);
+			else {
+				value = doc?.[path[0]];
+				if (isLeaf$1(value)) value = toString(value);
+				else if (isArray(value)) {
+					const items = value;
+					value = [];
+					for (let i = 0, len = items.length; i < len; i += 1) {
+						const item = items[i];
+						value[i] = isString(item) ? item : {
+							v: item,
+							i
+						};
+					}
+				}
+			}
 			if (isArray(value)) {
 				const subRecords = [];
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
-					if (!isDefined(item)) continue;
-					if (isString(item)) {
-						if (!isBlank(item)) {
-							const subRecord = {
-								v: item,
-								i,
-								n: this.norm.get(item)
-							};
-							subRecords.push(subRecord);
-						}
-					} else if (isDefined(item.v)) {
-						const text = isString(item.v) ? item.v : toString(item.v);
-						if (!isBlank(text)) {
-							const subRecord = {
-								v: text,
-								i: item.i,
-								n: this.norm.get(text)
-							};
-							subRecords.push(subRecord);
-						}
-					}
+					const str = isString(item);
+					const text = str ? item : toString(item?.v);
+					if (!isBlank(text)) subRecords.push({
+						v: text,
+						i: str ? i : item.i,
+						n: this.norm.get(text)
+					});
 				}
-				record.$[keyIndex] = subRecords;
-			} else if (isString(value) && !isBlank(value)) {
-				const subRecord = {
-					v: value,
-					n: this.norm.get(value)
-				};
-				record.$[keyIndex] = subRecord;
-			}
+				$[keyIndex] = subRecords;
+			} else if (isString(value) && !isBlank(value)) $[keyIndex] = {
+				v: value,
+				n: this.norm.get(value)
+			};
+			else delete $[keyIndex];
 		}
-		return record;
+		return {
+			i: docIndex,
+			$
+		};
 	}
 	toJSON() {
 		return {

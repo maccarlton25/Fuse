@@ -6,6 +6,7 @@ import {
   toString
 } from '../helpers/typeGuards'
 import Config from '../core/config'
+import get, { isLeaf } from '../helpers/get'
 import * as ErrorMsg from '../core/errorMessages'
 import normGenerator from './fieldNorm'
 import { createKey } from './KeyStore'
@@ -74,9 +75,20 @@ export default class FuseIndex<T = any> {
         }
       }
     } else {
-      // List is Array<Object>
+      // List is Array<Object>. Each record's `$` starts as a copy of a
+      // template holding every key index: copying an object literal's
+      // elements is several times cheaper than growing an empty `{}` on its
+      // first indexed store. Keys without a value are deleted again.
+      const template: Record<number, undefined> = {}
+      for (let k = 0; k < this.keys.length; k++) template[k] = undefined
       for (let i = 0; i < len; i++) {
-        this.records[recordCount++] = this._createObjectRecord(this.docs[i], i)
+        this.records[recordCount++] = (
+          this._createObjectRecord as (
+            doc: any,
+            docIndex: number,
+            $: Record<number, undefined>
+          ) => IndexRecord
+        )(this.docs[i], i, { ...template })
       }
     }
 
@@ -142,22 +154,17 @@ export default class FuseIndex<T = any> {
   // indices"; asymmetric throw-vs-no-op would be more surprising than a clean
   // filter.
   removeAll(indices: number[]): void {
-    const toRemove = new Set<number>()
-    for (const v of indices) {
-      if (Number.isInteger(v) && v >= 0) {
-        toRemove.add(v)
-      }
-    }
+    const sorted = Array.from(
+      new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))
+    ).sort((a, b) => a - b)
 
-    if (toRemove.size === 0) {
+    if (!sorted.length) {
       return
     }
 
-    this.records = this.records.filter((r) => !toRemove.has(r.i))
-
-    const sorted = Array.from(toRemove).sort((a, b) => a - b)
-    for (const record of this.records) {
-      // shift = count of removed indices strictly less than record.i
+    // One pass: the binary search both tests membership and yields the
+    // shift (count of removed indices strictly less than record.i).
+    this.records = this.records.filter((record) => {
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
@@ -165,8 +172,10 @@ export default class FuseIndex<T = any> {
         if (sorted[mid] < record.i) lo = mid + 1
         else hi = mid
       }
+      if (sorted[lo] === record.i) return false
       record.i -= lo
-    }
+      return true
+    })
   }
   getValueForItemAtKeyId(item: any, keyId: string): any {
     return item[this._keysMap[keyId]]
@@ -185,9 +194,14 @@ export default class FuseIndex<T = any> {
       n: this.norm.get(doc)
     }
   }
-  _createObjectRecord(doc: any, docIndex: number): IndexRecord {
-    const record: IndexRecord = { i: docIndex, $: {} }
-
+  // The declared signature stays (doc, docIndex); create() also passes the
+  // record's starting `$`.
+  _createObjectRecord(doc: any, docIndex: number): IndexRecord
+  _createObjectRecord(
+    doc: any,
+    docIndex: number,
+    $: Record<number, SubRecord | SubRecord[] | undefined> = {}
+  ): IndexRecord {
     // Iterate over every key (i.e, path), and fetch the value at that key
     for (
       let keyIndex = 0, keyLen = this.keys.length;
@@ -195,10 +209,30 @@ export default class FuseIndex<T = any> {
       keyIndex++
     ) {
       const key = this.keys[keyIndex]
-      const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path)
+      const path = key.path
+      let value
 
-      if (!isDefined(value)) {
-        continue
+      if (key.getFn) {
+        value = key.getFn(doc)
+      } else if (this.getFn !== get || path.length > 1 || !path[0]) {
+        value = this.getFn(doc, path)
+      } else {
+        // The default getFn on a one-segment path, inlined: read the field
+        // once, as get() does. Array items are read in one pass and the
+        // conversion below runs after it, as with get(), but string items
+        // need no `{ v, i }` wrapper (a string item at `i` means `{ v, i }`).
+        // The leaf test comes first, as in get(): on a Proxy it is observable.
+        value = doc?.[path[0]]
+        if (isLeaf(value)) {
+          value = toString(value)
+        } else if (isArray(value)) {
+          const items = value
+          value = []
+          for (let i = 0, len = items.length; i < len; i += 1) {
+            const item = items[i]
+            value[i] = isString(item) ? item : { v: item, i }
+          }
+        }
       }
 
       if (isArray(value)) {
@@ -206,48 +240,30 @@ export default class FuseIndex<T = any> {
 
         for (let i = 0, len = value.length; i < len; i += 1) {
           const item = value[i]
-
-          if (!isDefined(item)) {
-            continue
-          }
-
-          if (isString(item)) {
-            // Custom getFn returning plain string array (backward compat)
-            if (!isBlank(item)) {
-              const subRecord: SubRecord = {
-                v: item,
-                i: i,
-                n: this.norm.get(item)
-              }
-
-              subRecords.push(subRecord)
-            }
-          } else if (isDefined(item.v)) {
-            // Default get() returns {v, i} objects with original array indices
-            const text = isString(item.v) ? item.v : toString(item.v)
-            if (!isBlank(text)) {
-              const subRecord: SubRecord = {
-                v: text,
-                i: item.i,
-                n: this.norm.get(text)
-              }
-
-              subRecords.push(subRecord)
-            }
+          // A string item comes from a custom getFn returning a plain string
+          // array (backward compat) or from the inlined default getFn above;
+          // otherwise items are `{ v, i }` objects with original array
+          // indices. A missing item or `v` maps to '', which is blank and
+          // skipped.
+          const str = isString(item)
+          const text = str ? item : toString(item?.v)
+          if (!isBlank(text)) {
+            subRecords.push({
+              v: text,
+              i: str ? i : item.i,
+              n: this.norm.get(text)
+            })
           }
         }
-        record.$![keyIndex] = subRecords
+        $[keyIndex] = subRecords
       } else if (isString(value) && !isBlank(value)) {
-        const subRecord: SubRecord = {
-          v: value,
-          n: this.norm.get(value)
-        }
-
-        record.$![keyIndex] = subRecord
+        $[keyIndex] = { v: value, n: this.norm.get(value) }
+      } else {
+        delete $[keyIndex]
       }
     }
 
-    return record
+    return { i: docIndex, $ } as IndexRecord
   }
   toJSON(): {
     keys: ReadonlyArray<Omit<KeyObject, 'getFn'>>

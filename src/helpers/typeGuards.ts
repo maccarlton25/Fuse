@@ -1,8 +1,4 @@
-export function isArray(value: unknown): value is any[] {
-  return !Array.isArray
-    ? getTag(value) === '[object Array]'
-    : Array.isArray(value)
-}
+export const isArray = Array.isArray as (value: unknown) => value is any[]
 
 // Adapted from: https://github.com/lodash/lodash/blob/master/.internal/baseToString.js
 const INFINITY = 1 / 0
