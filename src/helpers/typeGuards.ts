@@ -49,7 +49,11 @@ export function isDefined<T>(value: T | undefined | null): value is T {
 }
 
 export function isBlank(value: string): boolean {
-  return !value.trim().length
+  // A string starting with printable ASCII (33-126, never whitespace) is not
+  // blank. Anything else, including non-strings, takes the baseline's trim(),
+  // which also throws the baseline's errors.
+  const c = typeof value == 'string' ? value.charCodeAt(0) : 0
+  return !(c > 32 && c < 127) && !value.trim().length
 }
 
 // Gets the `toStringTag` of `value`.

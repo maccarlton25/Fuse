@@ -594,3 +594,32 @@ describe('index creation reads item.v as often as the baseline (D2)', () => {
     expect(run(Fuse, values as any[])).toBe(run(BaselineFuse, values as any[]))
   })
 })
+
+describe('isBlank on non-strings behaves like trim()', () => {
+  const ref = (value: any) => !value.trim().length
+  const outcome = (f: (v: any) => boolean, v: any) => {
+    try {
+      return String(f(v))
+    } catch (e: any) {
+      return `${e.constructor.name}: ${e.message}`
+    }
+  }
+  test.each([
+    [5],
+    [null],
+    [undefined],
+    [Symbol('s')],
+    [{}],
+    [{ trim: () => '' }],
+    [{ trim: () => 'x' }],
+    [new String('  ')],
+    [new String('ab')],
+    [['a']],
+    ['\ufeffa'],
+    ['\u3000'],
+    ['\x7f'],
+    ['~']
+  ])('%s', (v) => {
+    expect(outcome(isBlank as any, v)).toBe(outcome(ref, v))
+  })
+})

@@ -36,7 +36,8 @@ function isDefined(value) {
 	return value !== void 0 && value !== null;
 }
 function isBlank(value) {
-	return !value.trim().length;
+	const c = typeof value == "string" ? value.charCodeAt(0) : 0;
+	return !(c > 32 && c < 127) && !value.trim().length;
 }
 function getTag(value) {
 	return value == null ? value === void 0 ? "[object Undefined]" : "[object Null]" : Object.prototype.toString.call(value);
