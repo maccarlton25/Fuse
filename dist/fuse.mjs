@@ -1188,11 +1188,18 @@ var TokenSearch = class {
 		});
 		const queryTerms = this.analyzer.tokenize(pattern);
 		const { df, fieldCount } = options._invertedIndex;
+		const { isCaseSensitive = Config.isCaseSensitive, ignoreDiacritics = Config.ignoreDiacritics } = options;
+		const normalize = this.normalize = (text) => {
+			text = isCaseSensitive ? text : text.toLowerCase();
+			return ignoreDiacritics ? stripDiacritics(text) : text;
+		};
 		this.termSearchers = [];
 		this.idfWeights = [];
 		for (const term of queryTerms) {
-			this.termSearchers.push(new BitapSearch(term, {
+			this.termSearchers.push(new BitapSearch(normalize(term), {
 				...options,
+				isCaseSensitive: true,
+				ignoreDiacritics: false,
 				ignoreLocation: true
 			}));
 			const docFreq = df.get(term) || 0;
@@ -1203,6 +1210,7 @@ var TokenSearch = class {
 		this.useMask = this.termSearchers.length <= 31;
 	}
 	searchIn(text) {
+		text = this.normalize(text);
 		const allIndices = [];
 		let weightedScore = 0;
 		let maxPossibleScore = 0;

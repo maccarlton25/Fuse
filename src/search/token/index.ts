@@ -1,6 +1,8 @@
 import BitapSearch from '../bitap'
 import { createAnalyzer } from './analyzer'
 import { mergeIndices } from '../../helpers/mergeIndices'
+import { stripDiacritics } from '../../helpers/diacritics'
+import Config from '../../core/config'
 import type { Analyzer } from './analyzer'
 import type { InvertedIndexData } from './InvertedIndex'
 import type { SearchResult, RangeTuple } from '../../types'
@@ -21,6 +23,9 @@ export default class TokenSearch {
   // ≥32-term fallback (JS bitwise ops are 32-bit signed).
   private combineAll: boolean
   private useMask: boolean
+  // Case folding and diacritic stripping, applied once per text in searchIn
+  // instead of once per term searcher.
+  private normalize: (text: string) => string
 
   static condition(_: string, options: any): boolean {
     return options.useTokenSearch
@@ -38,13 +43,30 @@ export default class TokenSearch {
     const invertedIndex: InvertedIndexData = options._invertedIndex
     const { df, fieldCount } = invertedIndex
 
+    // Resolved exactly as BitapSearch resolves them.
+    const {
+      isCaseSensitive = Config.isCaseSensitive,
+      ignoreDiacritics = Config.ignoreDiacritics
+    } = options
+    const normalize = (this.normalize = (text: string) => {
+      text = isCaseSensitive ? text : text.toLowerCase()
+      return ignoreDiacritics ? stripDiacritics(text) : text
+    })
+
     this.termSearchers = []
     this.idfWeights = []
 
     for (const term of queryTerms) {
       this.termSearchers.push(
-        // BitapSearch reads only its own option names from this object.
-        new BitapSearch(term, { ...options, ignoreLocation: true })
+        // BitapSearch reads only its own option names from this object. The
+        // term is normalised here exactly as BitapSearch would, and the term
+        // searchers receive texts already normalised by searchIn.
+        new BitapSearch(normalize(term), {
+          ...options,
+          isCaseSensitive: true,
+          ignoreDiacritics: false,
+          ignoreLocation: true
+        })
       )
 
       const docFreq = df.get(term) || 0
@@ -57,6 +79,7 @@ export default class TokenSearch {
   }
 
   searchIn(text: string): SearchResult {
+    text = this.normalize(text)
     // No query terms: the loop below never runs and the no-match result is
     // returned.
     const allIndices: RangeTuple[] = []
