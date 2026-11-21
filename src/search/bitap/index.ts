@@ -1,4 +1,5 @@
 import search, { type BitapChunk } from './search'
+import canMatch from './canMatch'
 import createPatternAlphabet from './createPatternAlphabet'
 import { MAX_BITS } from './constants'
 import { mergeIndices } from '../../helpers/mergeIndices'
@@ -119,6 +120,11 @@ export default class BitapSearch {
 
     // Otherwise, use Bitap algorithm
     const { location } = this.options
+
+    // Cheap proof that no chunk can match: skip the kernel entirely.
+    if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) {
+      return { isMatch: false, score: 1 }
+    }
 
     const allIndices: RangeTuple[] = []
     let totalScore = 0

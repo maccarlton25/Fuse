@@ -500,6 +500,39 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 }
 
 //#endregion
+//#region src/search/bitap/canMatch.ts
+function canMatch(text, { pattern, alphabet, table, startIndex }, { location, distance, threshold, ignoreLocation }) {
+	const n = text.length;
+	const m = pattern.length;
+	const expected = Math.max(0, Math.min(location + startIndex, n));
+	const w = ignoreLocation || distance < 0 ? n : threshold * distance + 1 || n;
+	let j = Math.min(n, expected + w + 2 * m) | 0;
+	const stop = expected > w ? expected - w : 0;
+	const last = 1 << m - 1;
+	let pv = -1;
+	let mv = 0;
+	let score = m;
+	while (j-- > stop) {
+		const c = text.charCodeAt(j);
+		const eq = table[c] ?? alphabet[c] | 0;
+		const xv = eq | mv;
+		const xh = (eq & pv) + pv ^ pv | eq;
+		let ph = mv | ~(xh | pv);
+		let mh = pv & xh;
+		if (ph & last) score++;
+		else if (mh & last) score--;
+		ph <<= 1;
+		mh <<= 1;
+		pv = mh | ~(xv | ph);
+		mv = ph & xv;
+		const proximity = Math.abs(expected - j);
+		const accuracy = score / m;
+		if ((ignoreLocation ? accuracy : !distance ? proximity ? 1 : accuracy : accuracy + proximity / distance) <= threshold) return true;
+	}
+	return false;
+}
+
+//#endregion
 //#region src/search/bitap/createPatternAlphabet.ts
 function createPatternAlphabet(pattern) {
 	const mask = {};
@@ -605,6 +638,10 @@ var BitapSearch = class {
 			return result;
 		}
 		const { location } = this.options;
+		if (this.chunks.every((chunk) => !canMatch(text, chunk, this.options))) return {
+			isMatch: false,
+			score: 1
+		};
 		const allIndices = [];
 		let totalScore = 0;
 		let hasMatches = false;
