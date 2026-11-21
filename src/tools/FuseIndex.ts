@@ -217,6 +217,7 @@ export default class FuseIndex<T = any> {
       const key = this.keys[keyIndex]
       const path = key.path
       let value
+      let subRecords: SubRecord[] | undefined
 
       if (key.getFn) {
         value = key.getFn(doc)
@@ -224,9 +225,10 @@ export default class FuseIndex<T = any> {
         value = this.getFn(doc, path)
       } else {
         // The default getFn on a one-segment path, inlined: read the field
-        // once, as get() does. Array items are read in one pass and the
-        // conversion below runs after it, as with get(), but string items
-        // need no `{ v, i }` wrapper (a string item at `i` means `{ v, i }`).
+        // once, as get() does. Array items are read in one pass. Leading
+        // string items become sub-records as they are read (nothing in that
+        // is observable); from the first other item on, items are wrapped as
+        // `{ v, i }` and converted below, after the read pass, as with get().
         // The leaf test comes first, as in get(): on a Proxy it is observable.
         value = doc?.[path[0]]
         if (isLeaf(value)) {
@@ -234,21 +236,25 @@ export default class FuseIndex<T = any> {
         } else if (isArray(value)) {
           const items = value
           value = []
+          subRecords = []
           for (let i = 0, len = items.length; i < len; i += 1) {
             const item = items[i]
-            value[i] = isString(item) ? item : { v: item, i }
+            if (value.length || !isString(item)) {
+              value.push({ v: item, i })
+            } else if (!isBlank(item)) {
+              subRecords.push({ v: item, i, n: this.norm.get(item) })
+            }
           }
         }
       }
 
       if (isArray(value)) {
-        const subRecords: SubRecord[] = []
+        subRecords = subRecords || []
 
         for (let i = 0, len = value.length; i < len; i += 1) {
           const item = value[i]
           // A string item comes from a custom getFn returning a plain string
-          // array (backward compat) or from the inlined default getFn above;
-          // otherwise items are `{ v, i }` objects with original array
+          // array (backward compat); otherwise items are `{ v, i }` objects with original array
           // indices. A missing item or `v` maps to '', which is blank and
           // skipped. `item.v` is read as in the baseline: once when nullish,
           // otherwise three times (a custom getFn may return getters).

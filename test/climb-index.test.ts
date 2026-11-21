@@ -623,3 +623,51 @@ describe('isBlank on non-strings behaves like trim()', () => {
     expect(outcome(isBlank as any, v)).toBe(outcome(ref, v))
   })
 })
+
+describe('inlined array keys: string items before other items match the baseline', () => {
+  const run = (F: any, make: (log: string[]) => any) => {
+    const log: string[] = []
+    let out: any
+    try {
+      const f = new F([{ k: make(log) }, { k: make(log) }], { keys: ['k'] })
+      out = f.getIndex().toJSON()
+    } catch (e: any) {
+      out = `${e.constructor.name}: ${e.message}`
+    }
+    return JSON.stringify({ out, log })
+  }
+  const obj = (log: string[], tag: string, val: any) => ({
+    toString() {
+      log.push('toString ' + tag)
+      return val
+    }
+  })
+  const proxy = (log: string[], arr: any[]) =>
+    new Proxy(arr, {
+      get(t, p, r) {
+        log.push('get ' + String(p))
+        return Reflect.get(t, p, r)
+      }
+    })
+  // eslint-disable-next-line no-sparse-arrays
+  const sparse = () => ['a', , 'b', ' ', 'c d']
+  test.each([
+    ['strings only', () => ['a', 'b c', '', '  ', 'd']],
+    ['strings then object', (l: string[]) => ['a', 'b', obj(l, 'o', 'x y'), 'c']],
+    ['object first', (l: string[]) => [obj(l, 'o', 'z'), 'a', 'b']],
+    ['strings then null and numbers', () => ['a', null, 0, -0, 'b', undefined, 5n, true]],
+    ['sparse', sparse],
+    ['strings then Symbol', () => ['a', 'b', Symbol('s'), 'c']],
+    ['strings then throwing toString', () => [
+      'a',
+      { toString() { throw new RangeError('boom') } },
+      'b'
+    ]],
+    ['Proxy array, strings then object', (l: string[]) =>
+      proxy(l, ['a', 'b', obj(l, 'p', 'q'), 'c'])],
+    ['Proxy array, strings only', (l: string[]) => proxy(l, ['a', ' ', 'b'])],
+    ['nested array item', () => ['a', ['b', 'c'], 'd']]
+  ])('%s', (_name, make) => {
+    expect(run(Fuse, make as any)).toBe(run(BaselineFuse, make as any))
+  })
+})

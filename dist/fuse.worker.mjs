@@ -301,6 +301,7 @@ var FuseIndex = class {
 			const key = this.keys[keyIndex];
 			const path = key.path;
 			let value;
+			let subRecords;
 			if (key.getFn) value = key.getFn(doc);
 			else if (this.getFn !== get || path.length > 1 || !path[0]) value = this.getFn(doc, path);
 			else {
@@ -309,17 +310,23 @@ var FuseIndex = class {
 				else if (isArray(value)) {
 					const items = value;
 					value = [];
+					subRecords = [];
 					for (let i = 0, len = items.length; i < len; i += 1) {
 						const item = items[i];
-						value[i] = isString(item) ? item : {
+						if (value.length || !isString(item)) value.push({
 							v: item,
 							i
-						};
+						});
+						else if (!isBlank(item)) subRecords.push({
+							v: item,
+							i,
+							n: this.norm.get(item)
+						});
 					}
 				}
 			}
 			if (isArray(value)) {
-				const subRecords = [];
+				subRecords = subRecords || [];
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
 					const str = isString(item);
