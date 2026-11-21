@@ -644,7 +644,12 @@ const MULTI_MATCH_TYPES = /* @__PURE__ */ new Set(["fuzzy", "include"]);
 function isInverse(type) {
 	return type.startsWith("inverse");
 }
-const FUZZY_OPTION_KEYS = "location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation".split(" ");
+const OPTION_KEYS = "isCaseSensitive ignoreDiacritics includeMatches minMatchCharLength findAllMatches ignoreLocation location threshold distance".split(" ");
+function resolveOptions(options = {}) {
+	const resolved = {};
+	for (const key of OPTION_KEYS) resolved[key] = options[key] ?? Config[key];
+	return resolved;
+}
 const def = (type, prefix, suffix, create) => ({
 	type,
 	multiRegex: new RegExp(`^${prefix}"(.*)"${suffix}$`),
@@ -742,10 +747,8 @@ const matchers = [
 			};
 		}
 	})),
-	def("fuzzy", "", "", (pattern, options = {}) => {
-		const resolved = {};
-		for (const key of FUZZY_OPTION_KEYS) resolved[key] = options[key] ?? Config[key];
-		const bitap = new BitapSearch(pattern, resolved);
+	def("fuzzy", "", "", (pattern, options) => {
+		const bitap = new BitapSearch(pattern, resolveOptions(options));
 		return {
 			type: "fuzzy",
 			search(text) {
@@ -857,24 +860,19 @@ function parseQuery(pattern, options = {}) {
 
 //#endregion
 //#region src/search/extended/index.ts
-const pickOptions = (options) => ({
-	isCaseSensitive: options.isCaseSensitive,
-	ignoreDiacritics: options.ignoreDiacritics,
-	includeMatches: options.includeMatches
-});
 function normalizeValue(pattern, options) {
 	pattern = options.isCaseSensitive ? pattern : pattern.toLowerCase();
 	return options.ignoreDiacritics ? stripDiacritics(pattern) : pattern;
 }
 var ExtendedSearch = class ExtendedSearch {
 	constructor(pattern, options = {}) {
-		this.options = pickOptions(options);
+		this.options = resolveOptions(options);
 		this.pattern = normalizeValue(pattern, options);
 		this.query = parseQuery(this.pattern, options);
 	}
 	static fromMatchers(query, options = {}) {
 		const search = Object.create(ExtendedSearch.prototype);
-		search.options = pickOptions(options);
+		search.options = resolveOptions(options);
 		search.pattern = "";
 		search.query = query;
 		return search;

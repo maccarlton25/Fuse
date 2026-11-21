@@ -1,26 +1,21 @@
 import parseQuery from './parseQuery'
-import { MULTI_MATCH_TYPES, isInverse } from './matchers'
+import { MULTI_MATCH_TYPES, isInverse, resolveOptions } from './matchers'
 import { stripDiacritics } from '../../helpers/diacritics'
 import { mergeIndices } from '../../helpers/mergeIndices'
 import type { SearchResult, RangeTuple } from '../../types'
 import type { Matcher } from './matchers'
 
-// The only options ExtendedSearch itself reads. Their Config defaults are all
-// `false`, so testing the raw option for truthiness is the same as testing
-// `option ?? Config.option`; the fuzzy matcher factory applies the remaining
-// defaults (location, threshold, ...) itself. Snapshotted at construction so a
-// later change to the caller's options object cannot reach a built searcher.
+// ExtendedSearch itself reads only isCaseSensitive, ignoreDiacritics and
+// includeMatches, but keeps all nine resolved options (the baseline's shape,
+// visible through the development build's `Fuse.parseQuery`). Snapshotted at
+// construction so a later change to the caller's options object cannot reach
+// a built searcher.
 interface ExtendedSearchOptions {
   isCaseSensitive: boolean
   ignoreDiacritics: boolean
   includeMatches: boolean
+  [key: string]: any
 }
-
-const pickOptions = (options: any): ExtendedSearchOptions => ({
-  isCaseSensitive: options.isCaseSensitive,
-  ignoreDiacritics: options.ignoreDiacritics,
-  includeMatches: options.includeMatches
-})
 
 // Normalize a pattern/operator value exactly as the string-pattern constructor
 // normalizes a whole query string (case-fold then strip diacritics). The object
@@ -43,7 +38,7 @@ export default class ExtendedSearch {
   pattern: string
 
   constructor(pattern: string, options: any = {}) {
-    this.options = pickOptions(options)
+    this.options = resolveOptions(options)
     this.pattern = normalizeValue(pattern, options)
     this.query = parseQuery(this.pattern, options)
   }
@@ -56,7 +51,7 @@ export default class ExtendedSearch {
   // normalized by the compiler; `searchIn` still normalizes the candidate text.
   static fromMatchers(query: Matcher[][], options: any = {}): ExtendedSearch {
     const search: ExtendedSearch = Object.create(ExtendedSearch.prototype)
-    search.options = pickOptions(options)
+    search.options = resolveOptions(options)
     search.pattern = '' // unused by searchIn; object leaves have no pattern string
     search.query = query
     return search

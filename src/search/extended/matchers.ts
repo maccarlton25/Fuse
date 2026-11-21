@@ -34,12 +34,23 @@ export function isInverse(type: string): boolean {
   return type.startsWith('inverse')
 }
 
-// The BitapSearch options the fuzzy matcher resolves against Config (with
-// `??`, so a null option also takes the default).
-const FUZZY_OPTION_KEYS =
-  'location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation'.split(
+// The options an extended searcher resolves against Config (with `??`, so a
+// null option also takes the default): what the fuzzy matcher hands to
+// BitapSearch, and what ExtendedSearch keeps as its `options`. The key order
+// is the baseline's, so the development build's `Fuse.parseQuery` tree
+// serializes identically.
+const OPTION_KEYS =
+  'isCaseSensitive ignoreDiacritics includeMatches minMatchCharLength findAllMatches ignoreLocation location threshold distance'.split(
     ' '
   )
+
+export function resolveOptions(options: any = {}): any {
+  const resolved: any = {}
+  for (const key of OPTION_KEYS) {
+    resolved[key] = options[key] ?? (Config as any)[key]
+  }
+  return resolved
+}
 
 // ── Matcher definitions ───────────────────────────────────────────
 //
@@ -172,12 +183,8 @@ const matchers: MatcherDef[] = [
   })),
 
   // term — fuzzy match (catch-all, must be last)
-  def('fuzzy', '', '', (pattern, options = {}) => {
-    const resolved: any = {}
-    for (const key of FUZZY_OPTION_KEYS) {
-      resolved[key] = options[key] ?? (Config as any)[key]
-    }
-    const bitap = new BitapSearch(pattern, resolved)
+  def('fuzzy', '', '', (pattern, options) => {
+    const bitap = new BitapSearch(pattern, resolveOptions(options))
 
     return {
       type: 'fuzzy',
