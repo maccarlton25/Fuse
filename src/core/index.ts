@@ -49,8 +49,10 @@ function pushMatches(
   searcher: Searcher
 ): void {
   if (isArray(value)) {
+    // `for...of` visits holes in a sparse array (a hand-built index passed to
+    // Fuse.parseIndex); `forEach` in the baseline skipped them.
     for (const sub of value) {
-      if (isDefined(sub.v)) {
+      if (sub && isDefined(sub.v)) {
         pushMatch(out, key, sub, true, searcher)
       }
     }
@@ -376,6 +378,8 @@ export default class Fuse<T> {
 
     // Iterate over every string in the index
     for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
       const text = record.v
       if (!isDefined(text)) {
         continue
@@ -518,6 +522,8 @@ export default class Fuse<T> {
 
     // List is Array<Object>
     for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
       const item = record.$
       if (!isDefined(item)) {
         continue

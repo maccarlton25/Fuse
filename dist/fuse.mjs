@@ -1338,7 +1338,7 @@ function removeAndShiftInvertedIndex(index, removedIndices) {
 //#region src/core/index.ts
 function pushMatches(out, key, value, searcher) {
 	if (isArray(value)) {
-		for (const sub of value) if (isDefined(sub.v)) pushMatch(out, key, sub, true, searcher);
+		for (const sub of value) if (sub && isDefined(sub.v)) pushMatch(out, key, sub, true, searcher);
 	} else if (isDefined(value)) pushMatch(out, key, value, false, searcher);
 }
 function pushMatch(out, key, sub, inArray, searcher) {
@@ -1504,6 +1504,7 @@ var Fuse = class {
 		const records = this._myIndex.records;
 		const results = heap ? null : [];
 		for (const record of records) {
+			if (!record) continue;
 			const text = record.v;
 			if (!isDefined(text)) continue;
 			const searchResult = searcher.searchIn(text);
@@ -1603,6 +1604,7 @@ var Fuse = class {
 		const results = heap ? null : [];
 		let matches = [];
 		for (const record of records) {
+			if (!record) continue;
 			const item = record.$;
 			if (!isDefined(item)) continue;
 			let anyKeyFailed = false;
