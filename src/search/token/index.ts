@@ -1,6 +1,8 @@
 import BitapSearch from '../bitap'
 import { createAnalyzer } from './analyzer'
 import { mergeIndices } from '../../helpers/mergeIndices'
+import { stripDiacritics } from '../../helpers/diacritics'
+import Config from '../../core/config'
 import type { Analyzer } from './analyzer'
 import type { InvertedIndexData } from './InvertedIndex'
 import type { SearchResult, RangeTuple } from '../../types'
@@ -20,8 +22,10 @@ export default class TokenSearch {
   // coverage of every term. Bitmask is the ≤31-term fast path; Set is the
   // ≥32-term fallback (JS bitwise ops are 32-bit signed).
   private combineAll: boolean
-  private numTerms: number
   private useMask: boolean
+  // Case folding and diacritic stripping, applied once per text in searchIn
+  // instead of once per term searcher.
+  private normalize: (text: string) => string
 
   static condition(_: string, options: any): boolean {
     return options.useTokenSearch
@@ -39,20 +43,28 @@ export default class TokenSearch {
     const invertedIndex: InvertedIndexData = options._invertedIndex
     const { df, fieldCount } = invertedIndex
 
+    // Resolved exactly as BitapSearch resolves them.
+    const {
+      isCaseSensitive = Config.isCaseSensitive,
+      ignoreDiacritics = Config.ignoreDiacritics
+    } = options
+    const normalize = (this.normalize = (text: string) => {
+      text = isCaseSensitive ? text : text.toLowerCase()
+      return ignoreDiacritics ? stripDiacritics(text) : text
+    })
+
     this.termSearchers = []
     this.idfWeights = []
 
     for (const term of queryTerms) {
       this.termSearchers.push(
-        new BitapSearch(term, {
-          location: options.location,
-          threshold: options.threshold,
-          distance: options.distance,
-          includeMatches: options.includeMatches,
-          findAllMatches: options.findAllMatches,
-          minMatchCharLength: options.minMatchCharLength,
-          isCaseSensitive: options.isCaseSensitive,
-          ignoreDiacritics: options.ignoreDiacritics,
+        // BitapSearch reads only its own option names from this object. The
+        // term is normalised here exactly as BitapSearch would, and the term
+        // searchers receive texts already normalised by searchIn.
+        new BitapSearch(normalize(term), {
+          ...options,
+          isCaseSensitive: true,
+          ignoreDiacritics: false,
           ignoreLocation: true
         })
       )
@@ -63,15 +75,13 @@ export default class TokenSearch {
     }
 
     this.combineAll = options.tokenMatch === 'all'
-    this.numTerms = this.termSearchers.length
-    this.useMask = this.numTerms <= MAX_MASK_TERMS
+    this.useMask = this.termSearchers.length <= MAX_MASK_TERMS
   }
 
   searchIn(text: string): SearchResult {
-    if (!this.termSearchers.length) {
-      return { isMatch: false, score: 1 }
-    }
-
+    text = this.normalize(text)
+    // No query terms: the loop below never runs and the no-match result is
+    // returned.
     const allIndices: RangeTuple[] = []
     let weightedScore = 0
     let maxPossibleScore = 0
@@ -130,7 +140,7 @@ export default class TokenSearch {
       } else {
         searchResult.matchedTerms = matchedTerms!
       }
-      searchResult.termCount = this.numTerms
+      searchResult.termCount = this.termSearchers.length
     }
 
     return searchResult

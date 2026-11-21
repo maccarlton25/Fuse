@@ -1,13 +1,10 @@
 import get from '../helpers/get'
 import type { IFuseOptions } from '../types'
 
-export const MatchOptions = {
-  includeMatches: false,
-  findAllMatches: false,
-  minMatchCharLength: 1
-}
-
-export const BasicOptions = {
+// One literal, in the order the former Basic/Match/Fuzzy/Advanced option
+// groups were spread, so `Object.keys(Fuse.config)` is unchanged.
+const Config: Required<IFuseOptions<any>> = Object.freeze({
+  // Basic options
   isCaseSensitive: false,
   ignoreDiacritics: false,
   includeScore: false,
@@ -17,16 +14,16 @@ export const BasicOptions = {
     a: { score: number; idx: number },
     b: { score: number; idx: number }
   ): number =>
-    a.score === b.score ? (a.idx < b.idx ? -1 : 1) : a.score < b.score ? -1 : 1
-}
-
-export const FuzzyOptions = {
+    a.score === b.score ? (a.idx < b.idx ? -1 : 1) : a.score < b.score ? -1 : 1,
+  // Match options
+  includeMatches: false,
+  findAllMatches: false,
+  minMatchCharLength: 1,
+  // Fuzzy options
   location: 0,
   threshold: 0.6,
-  distance: 100
-}
-
-export const AdvancedOptions = {
+  distance: 100,
+  // Advanced options
   useExtendedSearch: false,
   useTokenSearch: false,
   tokenize: undefined as IFuseOptions<any>['tokenize'],
@@ -35,13 +32,6 @@ export const AdvancedOptions = {
   ignoreLocation: false,
   ignoreFieldNorm: false,
   fieldNormWeight: 1
-}
-
-const Config: Required<IFuseOptions<any>> = Object.freeze({
-  ...BasicOptions,
-  ...MatchOptions,
-  ...FuzzyOptions,
-  ...AdvancedOptions
 }) as Required<IFuseOptions<any>>
 
 export default Config

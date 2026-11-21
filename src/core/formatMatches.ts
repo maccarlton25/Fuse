@@ -1,4 +1,3 @@
-import { isDefined } from '../helpers/typeGuards'
 import type { InternalResult, FuseResultMatch } from '../types'
 
 export default function formatMatches(
@@ -7,7 +6,7 @@ export default function formatMatches(
   const matches: FuseResultMatch[] = []
 
   result.matches.forEach((match) => {
-    if (!isDefined(match.indices) || !match.indices.length) {
+    if (!match.indices?.length) {
       return
     }
 

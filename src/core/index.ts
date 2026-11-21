@@ -40,6 +40,67 @@ interface HeapSearchOptions {
   ignoreFieldNorm?: boolean
 }
 
+// Appends the matches of one key's value (a single SubRecord or an array of
+// them, in element order) to `out`. Module-level so the minifier can mangle it.
+function pushMatches(
+  out: MatchScore[],
+  key: KeyObject | null,
+  value: SubRecord | SubRecord[] | undefined,
+  searcher: Searcher
+): void {
+  if (isArray(value)) {
+    // `for...of` visits holes in a sparse array (a hand-built index passed to
+    // Fuse.parseIndex); `forEach` in the baseline skipped them.
+    for (const sub of value) {
+      if (sub && isDefined(sub.v)) {
+        pushMatch(out, key, sub, true, searcher)
+      }
+    }
+  } else if (isDefined(value)) {
+    pushMatch(out, key, value, false, searcher)
+  }
+}
+
+function pushMatch(
+  out: MatchScore[],
+  key: KeyObject | null,
+  sub: SubRecord,
+  inArray: boolean,
+  searcher: Searcher
+): void {
+  const text = sub.v
+  const searchResult = searcher.searchIn(text)
+
+  if (searchResult.isMatch) {
+    const match: MatchScore = inArray
+      ? {
+          score: searchResult.score,
+          key,
+          value: text,
+          idx: sub.i,
+          norm: sub.n,
+          indices: searchResult.indices,
+          hasInverse: searchResult.hasInverse
+        }
+      : {
+          score: searchResult.score,
+          key,
+          value: text,
+          norm: sub.n,
+          indices: searchResult.indices,
+          hasInverse: searchResult.hasInverse
+        }
+    // Carry token-search AND coverage only when present, so the default
+    // (non-token / 'any') MatchScore keeps its original object shape.
+    if (searchResult.termCount !== undefined) {
+      match.matchedMask = searchResult.matchedMask
+      match.matchedTerms = searchResult.matchedTerms
+      match.termCount = searchResult.termCount
+    }
+    out.push(match)
+  }
+}
+
 export default class Fuse<T> {
   options: Required<IFuseOptions<T>>
   _keyStore: KeyStore
@@ -272,23 +333,22 @@ export default class Fuse<T> {
 
     let results: InternalResult[]
 
-    if (useHeap) {
-      const heap = new MaxHeap(limit, stable)
-      if (isString(this._docs[0])) {
-        this._searchStringList(query as string, { heap, ignoreFieldNorm })
-      } else {
-        this._searchObjectList(query as string, { heap, ignoreFieldNorm })
+    if (isString(query)) {
+      // The scans score each result as they collect it, and return the heap's
+      // sorted top-N when given one.
+      const opts = {
+        heap: useHeap ? new MaxHeap(limit, stable) : undefined,
+        ignoreFieldNorm
       }
-      results = heap.extractSorted()
+      results = isString(this._docs[0])
+        ? this._searchStringList(query, opts)!
+        : this._searchObjectList(query, opts)!
     } else {
-      results = isString(query)
-        ? isString(this._docs[0])
-          ? this._searchStringList(query)!
-          : this._searchObjectList(query)!
-        : this._searchLogical(query as Expression)
-
+      results = this._searchLogical(query)
       computeScore(results, { ignoreFieldNorm })
+    }
 
+    if (!useHeap) {
       if (shouldSort) {
         results.sort(isString(query) ? stable : comparator)
       }
@@ -311,13 +371,17 @@ export default class Fuse<T> {
     const searcher = this._getSearcher(query)
     const requireAllTokens =
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
-    const { records } = this._myIndex
+    const records = this._myIndex.records
     const results: InternalResult[] | null = heap ? null : []
+    const scoreOpts = { ignoreFieldNorm }
 
     // Iterate over every string in the index
-    records.forEach(({ v: text, i: idx, n: norm }) => {
+    for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
+      const text = record.v
       if (!isDefined(text)) {
-        return
+        continue
       }
 
       const searchResult = searcher.searchIn(text)
@@ -326,7 +390,7 @@ export default class Fuse<T> {
         const match: MatchScore = {
           score: searchResult.score,
           value: text,
-          norm: norm!,
+          norm: record.n!,
           indices: searchResult.indices
         }
         if (requireAllTokens) {
@@ -339,21 +403,19 @@ export default class Fuse<T> {
         // Record-level AND gate (token search `tokenMatch: 'all'`), applied
         // before heap insertion so `limit` returns the same top-N as unlimited.
         if (!requireAllTokens || this._coversAllTokens(matches)) {
-          const result: InternalResult = { item: text, idx, matches }
+          const result: InternalResult = { item: text, idx: record.i, matches }
+          result.score = computeScoreSingle(matches, scoreOpts)
 
           if (heap) {
-            result.score = computeScoreSingle(result.matches, {
-              ignoreFieldNorm
-            })
             heap.insert(result)
           } else {
             results!.push(result)
           }
         }
       }
-    })
+    }
 
-    return results
+    return heap ? heap.extractSorted() : results
   }
 
   _searchLogical(query: Expression): InternalResult[] {
@@ -367,61 +429,45 @@ export default class Fuse<T> {
     // scores consistent with string and keyed queries.
     const keys = this._normalizedKeys()
 
-    const evaluate = (
-      node: ParsedNode,
-      item: any,
-      idx: number
-    ): InternalResult[] => {
+    // Appends the node's matches to `out`; the node matched iff `out` grew.
+    // A failing AND rolls `out` back to where it started, discarding the
+    // matches of the children that did match, exactly like dropping their
+    // result arrays did.
+    const evaluate = (node: ParsedNode, item: any, out: MatchScore[]) => {
       if (!('children' in node)) {
         const { keyId, searcher } = node as ParsedLeaf
 
-        let matches: MatchScore[]
-
         if (keyId === null) {
           // Keyless entry: search across all keys
-          matches = []
-          keys.forEach((key, keyIndex) => {
-            matches.push(
-              ...this._findMatches({
-                key,
-                value: item[keyIndex],
-                searcher: searcher!
-              })
-            )
-          })
+          for (let k = 0; k < keys.length; k += 1) {
+            const m = this._findMatches({
+              key: keys[k],
+              value: item[k],
+              searcher: searcher!
+            })
+            for (let j = 0; j < m.length; j += 1) out.push(m[j])
+          }
         } else {
-          matches = this._findMatches({
+          const m = this._findMatches({
             key: this._keyStore.get(keyId),
             value: this._myIndex.getValueForItemAtKeyId(item, keyId),
             searcher: searcher!
           })
+          for (let j = 0; j < m.length; j += 1) out.push(m[j])
         }
-
-        if (matches && matches.length) {
-          return [
-            {
-              idx,
-              item,
-              matches
-            }
-          ]
-        }
-
-        return []
+        return
       }
 
       const { children, operator } = node as ParsedOperator
-      const res: InternalResult[] = []
+      const start = out.length
       for (let i = 0, len = children.length; i < len; i += 1) {
-        const child = children[i]
-        const result = evaluate(child, item, idx)
-        if (result.length) {
-          res.push(...result)
-        } else if (operator === LogicalOperator.AND) {
-          return []
+        const before = out.length
+        evaluate(children[i], item, out)
+        if (out.length === before && operator === LogicalOperator.AND) {
+          out.length = start
+          return
         }
       }
-      return res
     }
 
     const records = this._myIndex.records
@@ -430,17 +476,19 @@ export default class Fuse<T> {
 
     records.forEach(({ $: item, i: idx }) => {
       if (isDefined(item)) {
-        const expResults = evaluate(expression, item, idx)
+        const matches: MatchScore[] = []
+        evaluate(expression, item, matches)
 
-        if (expResults.length) {
+        if (matches.length) {
           // Dedupe when adding
-          if (!resultMap.has(idx)) {
-            resultMap.set(idx, { idx, item, matches: [] })
-            results.push(resultMap.get(idx)!)
+          const existing = resultMap.get(idx)
+          if (existing) {
+            existing.matches.push(...matches)
+          } else {
+            const result = { idx, item, matches }
+            resultMap.set(idx, result)
+            results.push(result)
           }
-          expResults.forEach(({ matches }) => {
-            resultMap.get(idx)!.matches.push(...matches)
-          })
         }
       }
     })
@@ -463,63 +511,66 @@ export default class Fuse<T> {
     const searcher = this._getSearcher(query)
     const requireAllTokens =
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
-    const { records } = this._myIndex
+    const records = this._myIndex.records
     const keys = this._normalizedKeys()
     const results: InternalResult[] | null = heap ? null : []
+    const scoreOpts = { ignoreFieldNorm }
+    // One matches array per record, reused until a record actually matches,
+    // instead of a fresh array per key per record.
+    let matches: MatchScore[] = []
 
     // List is Array<Object>
-    records.forEach(({ $: item, i: idx }) => {
+    for (const record of records) {
+      // Skip holes in a sparse `records` array, as `forEach` did.
+      if (!record) continue
+      const item = record.$
       if (!isDefined(item)) {
-        return
+        continue
       }
 
-      const matches: MatchScore[] = []
       let anyKeyFailed = false
       let hasInverse = false
 
       // Iterate over every key (i.e, path), and fetch the value at that key
-      keys.forEach((key, keyIndex) => {
-        const keyMatches = this._findMatches({
-          key,
-          value: item[keyIndex],
-          searcher
-        })
+      for (let k = 0; k < keys.length; k += 1) {
+        const start = matches.length
+        pushMatches(matches, keys[k], item[k], searcher)
 
-        if (keyMatches.length) {
-          matches.push(...keyMatches)
-          if (keyMatches[0].hasInverse) {
+        if (matches.length > start) {
+          if (matches[start].hasInverse) {
             hasInverse = true
           }
         } else {
           anyKeyFailed = true
         }
-      })
-
-      // If the search involves inverse patterns, ALL keys must match
-      if (hasInverse && anyKeyFailed) {
-        return
       }
 
+      // If the search involves inverse patterns, ALL keys must match.
       // Record-level AND gate (token search `tokenMatch: 'all'`): every query
       // term must be covered across the record's field/array-element matches.
       // Applied before heap insertion so `limit` returns the same top-N.
       if (
         matches.length &&
+        !(hasInverse && anyKeyFailed) &&
         (!requireAllTokens || this._coversAllTokens(matches))
       ) {
-        const result: InternalResult = { idx, item, matches }
+        const result: InternalResult = { idx: record.i, item, matches }
+        result.score = computeScoreSingle(matches, scoreOpts)
 
         if (heap) {
-          result.score = computeScoreSingle(result.matches, { ignoreFieldNorm })
           heap.insert(result)
         } else {
           results!.push(result)
         }
+        matches = []
+      } else {
+        matches.length = 0
       }
-    })
+    }
 
-    return results
+    return heap ? heap.extractSorted() : results
   }
+
   _findMatches({
     key,
     value,
@@ -529,63 +580,8 @@ export default class Fuse<T> {
     value: SubRecord | SubRecord[] | undefined
     searcher: Searcher
   }): MatchScore[] {
-    if (!isDefined(value)) {
-      return []
-    }
-
     const matches: MatchScore[] = []
-
-    if (isArray(value)) {
-      value.forEach(({ v: text, i: idx, n: norm }: SubRecord) => {
-        if (!isDefined(text)) {
-          return
-        }
-
-        const searchResult = searcher.searchIn(text)
-
-        if (searchResult.isMatch) {
-          const match: MatchScore = {
-            score: searchResult.score,
-            key,
-            value: text,
-            idx,
-            norm,
-            indices: searchResult.indices,
-            hasInverse: searchResult.hasInverse
-          }
-          // Carry token-search AND coverage only when present, so the default
-          // (non-token / 'any') MatchScore keeps its original object shape.
-          if (searchResult.termCount !== undefined) {
-            match.matchedMask = searchResult.matchedMask
-            match.matchedTerms = searchResult.matchedTerms
-            match.termCount = searchResult.termCount
-          }
-          matches.push(match)
-        }
-      })
-    } else {
-      const { v: text, n: norm } = value
-
-      const searchResult = searcher.searchIn(text)
-
-      if (searchResult.isMatch) {
-        const match: MatchScore = {
-          score: searchResult.score,
-          key,
-          value: text,
-          norm,
-          indices: searchResult.indices,
-          hasInverse: searchResult.hasInverse
-        }
-        if (searchResult.termCount !== undefined) {
-          match.matchedMask = searchResult.matchedMask
-          match.matchedTerms = searchResult.matchedTerms
-          match.termCount = searchResult.termCount
-        }
-        matches.push(match)
-      }
-    }
-
+    pushMatches(matches, key, value, searcher)
     return matches
   }
 
@@ -593,8 +589,9 @@ export default class Fuse<T> {
   // unless the matched terms across ALL of a record's field/array-element
   // matches fail to cover every query term. `termCount` is only set by
   // TokenSearch in 'all' mode, so non-token / 'any' searches always pass.
+  // Both callers pass a non-empty `matches`.
   _coversAllTokens(matches: MatchScore[]): boolean {
-    const termCount = matches.length ? matches[0].termCount : undefined
+    const termCount = matches[0].termCount
     if (termCount === undefined) {
       return true
     }
