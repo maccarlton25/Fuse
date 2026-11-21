@@ -755,3 +755,82 @@ request for a fix; that choice is the owner's to confirm or reverse.
   `origin/main...origin/climb/final` (recorded in the pull request, since it
   ran after this file was committed).
 - The original architect did not verify this tree.
+
+### Addendum: final review of `climb/final` (`5a341ef`)
+
+An independent reviewer (thread `msg_b349f914-d7d3-415e-96b0-5dbdef967a6c_1`)
+reviewed `origin/main...origin/climb/final` at `5a341ef` in its own sandbox:
+**ACCEPT WITH FOLLOW-UPS**. This commit only records that review; it changes
+no library code, test, tool or `dist/` file.
+
+What it ran:
+- Integrity, build and tests: both SHA-256 values equal `AGENTS.md`; no change
+  to the locked files, build configuration or any test that exists on `main`
+  (10 test files added); typecheck and build OK; 32 files / 849 tests pass
+  (22 / 449 on `main`); `dist/` equals a fresh build.
+- Guards on its own seeds: `PARITY_FUZZ_OK rev=2` on 211, 377, 4096, 9137,
+  20261121 and 65537; `MATCH_FUZZ_OK cases=200000` on 313, 7777 and 31337
+  (0 mismatches, 0 candidate-only throws; 13352 / 13322 / 13302 baseline-only
+  throws); `INDEX_API_FUZZ_OK removeAll=5000` on the same three seeds;
+  `RETENTION_PROBE_OK` (0.02 MB); `FIELD_LENGTH_PROBE_OK` in 3 of 3 runs
+  (`lone hit` cells 0.39–0.99).
+- Verifier, all PASS with 38 parity checks and 9811 B:
+
+| run | bitap_fuzzy | bitap_matches | topk_limit10 | extended_logical | token_inverted | index_diacritics_mutate | composite |
+|---|---|---|---|---|---|---|---|
+| train #1 | 18.215x (1211.2→66.5 ms) | 14.519x (1206.4→83.1) | 18.637x (1165.2→62.5) | 9.694x (332.7→34.3) | 28.759x (2891.5→100.5) | 1.097x (8.80→8.02) | **10.7082x** |
+| train #2 | 17.474x (1138.6→65.2 ms) | 14.506x (1212.2→83.6) | 19.182x (1146.1→59.8) | 10.122x (332.0→32.8) | 27.453x (2733.5→99.6) | 1.098x (7.75→7.06) | **10.6796x** |
+| train #3 | 17.684x (1139.9→64.5 ms) | 14.588x (1180.2→80.9) | 18.714x (1124.6→60.1) | 10.013x (329.0→32.9) | 26.757x (2711.4→101.3) | 1.091x (8.66→7.94) | **10.5907x** |
+| holdout #1 | 17.357x (1150.9→66.3 ms) | 13.107x (1265.4→96.5) | 19.861x (1210.3→60.9) | 8.992x (329.8→36.7) | 26.368x (2724.2→103.3) | 1.107x (7.74→7.00) | **10.2881x** |
+| holdout #2 | 17.046x (1123.5→65.9 ms) | 14.222x (1176.3→82.7) | 18.289x (1145.3→62.6) | 11.258x (419.0→37.2) | 26.147x (2785.9→106.5) | 1.443x (11.64→8.07) | **11.1121x** |
+
+  Its baseline ran about 1.5x slower than the lead's (1211 against 746 ms on
+  `bitap_fuzzy`), which is why it reads 10.3–11.1x where the lead read
+  9.0–9.6x for the same code. The 1.443x on the index workload is noise (the
+  baseline took 11.64 ms in that run).
+- Its own differential against the baseline over the whole search surface
+  (2,700 cases and 23,010 comparisons with index mutations, parsed indexes,
+  extended, logical and token search; 10,000 `Fuse.match` cases; 936 cases of
+  non-string values through `getFn`, the default getter and string lists):
+  0 mismatches, 0 candidate-only throws, 0 changed messages; 926 baseline-only
+  throws, all `RangeError: Invalid array length`. Controls: `climb/gen1-best`
+  gives 31 candidate-only throws and 2 mismatches, a `<=` → `<` mutant of the
+  edit bound gives 19 mismatches in 300 cases; a one-character `!$` mutant was
+  not caught (a gap in its generator).
+- Its own grids for the disclosed classes, same counts on `climb/gen2-best`:
+  non-string input, 15,000 cases: 400 candidate-only throws, 400
+  baseline-only, 2,480 changed messages, 0 differing results; BigInt options,
+  640 cases: 66 candidate-only throws, 28 baseline-only, 64 changed messages;
+  other odd option values, 2,560 cases: 130 baseline-only throws and nothing
+  else. It found no divergence outside the five disclosed classes, and would
+  not reverse the decision to disclose them.
+- Timings outside the benchmark: index build 0.80–1.00 of the baseline on
+  short words, tabs, NBSP and long fields (one 0.5 ms run read 1.39 and did
+  not reproduce); long-field searches 0.03–1.05 with identical results;
+  patterns of 31 to 33 characters over 20,000 short texts 0.01–0.17. No
+  finding.
+
+What it added to the record:
+- **Public surface.** `dist/fuse.d.ts` and `dist/fuse.d.cts` differ from
+  `main` in two internal declarations: `MaxHeap` loses `get size()`,
+  `_bubbleUp` and `_sinkDown` (topk follow-up 4), and `_searchStringList` /
+  `_searchObjectList` declare their second parameter as
+  `opts?: HeapSearchOptions` instead of a destructuring pattern of the same
+  type. No exported name or member type changes. `MaxHeap` is not exported by
+  name but is reachable through `HeapSearchOptions.heap` on underscore
+  methods of the exported `Fuse` class.
+- **Class 4 (BigInt options)** is reached through the ordinary constructor
+  (`new Fuse(list, { threshold: 0n })`), unlike class 3, and has no measured
+  fix. Follow-up: price a `typeof`-guarded fix.
+- **History.** 58 commits, 13 of them two-parent merges; nothing squashed;
+  every commit that changes `src/` also commits `dist/`. Commit bodies that
+  fall short of `AGENTS.md`: merges `efbd65e`, `3f05f16` and `1ad9685` have
+  empty bodies (tooling only); test-only `2b9b9e5`, `3398a27` and `06f1872`
+  carry no verifier numbers of their own; `6888153`, `5e1b88c`, `10a87ec`
+  (gen2-size) and `167366d` give speedups and the composite but not the
+  target workload's milliseconds. Pushed history is not rewritten, so these
+  stay.
+- **gen2-myers F1** is addressed by `bc85d8a`: the first scan reviewer read
+  the 100k-character `ignoreLocation` + `includeMatches` case at 0.73–0.85 of
+  `climb/gen2-best`'s time. Nobody re-measured it against `climb/gen1-best`,
+  where the original finding was 1.60x, so it is reduced and not shown closed.
