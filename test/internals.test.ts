@@ -2,6 +2,7 @@ import norm from '../src/tools/fieldNorm'
 import BitapSearch from '../src/search/bitap'
 import canMatch from '../src/search/bitap/canMatch'
 import search from '../src/search/bitap/search'
+import { stripDiacritics } from '../src/helpers/diacritics'
 import {
   buildInvertedIndex,
   addToInvertedIndex,
@@ -438,6 +439,20 @@ describe('canMatch prefilter', () => {
           }
         }
       }
+    }
+  })
+
+  test('handles non-Latin scripts, emoji surrogates, and diacritic folding', () => {
+    expect(
+      stripDiacritics('Cafe\u0301 Ło\u0301dz\u0301 straße Søren Đặng')
+    ).toBe('Cafe Lodz strasse Soren Dang')
+    for (const [pattern, text] of [
+      ['東京スカイツリー', '東京スカイツリーと京都の寺院'],
+      ['البحث الضبابي', 'نظام البحث الضبابي باللغة العربية'],
+      ['🚀👨‍👩‍👧‍👦', 'Emoji 🚀👨‍👩‍👧‍👦 astral test']
+    ]) {
+      const bitap = new BitapSearch(pattern, { ignoreLocation: true })
+      expect(bitap.searchIn(text).isMatch).toBe(true)
     }
   })
 })
