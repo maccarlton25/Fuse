@@ -142,22 +142,17 @@ export default class FuseIndex<T = any> {
   // indices"; asymmetric throw-vs-no-op would be more surprising than a clean
   // filter.
   removeAll(indices: number[]): void {
-    const toRemove = new Set<number>()
-    for (const v of indices) {
-      if (Number.isInteger(v) && v >= 0) {
-        toRemove.add(v)
-      }
-    }
+    const sorted = Array.from(
+      new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))
+    ).sort((a, b) => a - b)
 
-    if (toRemove.size === 0) {
+    if (!sorted.length) {
       return
     }
 
-    this.records = this.records.filter((r) => !toRemove.has(r.i))
-
-    const sorted = Array.from(toRemove).sort((a, b) => a - b)
-    for (const record of this.records) {
-      // shift = count of removed indices strictly less than record.i
+    // One pass: the binary search both tests membership and yields the
+    // shift (count of removed indices strictly less than record.i).
+    this.records = this.records.filter((record) => {
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
@@ -165,8 +160,10 @@ export default class FuseIndex<T = any> {
         if (sorted[mid] < record.i) lo = mid + 1
         else hi = mid
       }
+      if (sorted[lo] === record.i) return false
       record.i -= lo
-    }
+      return true
+    })
   }
   getValueForItemAtKeyId(item: any, keyId: string): any {
     return item[this._keysMap[keyId]]
@@ -211,29 +208,15 @@ export default class FuseIndex<T = any> {
             continue
           }
 
-          if (isString(item)) {
-            // Custom getFn returning plain string array (backward compat)
-            if (!isBlank(item)) {
-              const subRecord: SubRecord = {
-                v: item,
-                i: i,
-                n: this.norm.get(item)
-              }
-
-              subRecords.push(subRecord)
-            }
-          } else if (isDefined(item.v)) {
-            // Default get() returns {v, i} objects with original array indices
-            const text = isString(item.v) ? item.v : toString(item.v)
-            if (!isBlank(text)) {
-              const subRecord: SubRecord = {
-                v: text,
-                i: item.i,
-                n: this.norm.get(text)
-              }
-
-              subRecords.push(subRecord)
-            }
+          // A string item comes from a custom getFn returning a plain string
+          // array (backward compat); the default get() returns {v, i} objects
+          // with original array indices. A missing `v` maps to '', which is
+          // blank and skipped.
+          const str = isString(item)
+          const text = str ? item : toString(item.v)
+          const idx = str ? i : item.i
+          if (!isBlank(text)) {
+            subRecords.push({ v: text, i: idx, n: this.norm.get(text) })
           }
         }
         record.$![keyIndex] = subRecords

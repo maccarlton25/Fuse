@@ -7,9 +7,7 @@
  * http://www.apache.org/licenses/LICENSE-2.0
  */
 //#region src/helpers/typeGuards.ts
-function isArray(value) {
-	return !Array.isArray ? getTag(value) === "[object Array]" : Array.isArray(value);
-}
+const isArray = Array.isArray;
 function baseToString(value) {
 	if (typeof value == "string") return value;
 	if (typeof value === "bigint") return value.toString();
@@ -38,7 +36,8 @@ function isDefined(value) {
 	return value !== void 0 && value !== null;
 }
 function isBlank(value) {
-	return !value.trim().length;
+	const c = value.charCodeAt(0);
+	return !(c > 32 && c < 127) && !value.trim().length;
 }
 function getTag(value) {
 	return value == null ? value === void 0 ? "[object Undefined]" : "[object Null]" : Object.prototype.toString.call(value);
@@ -123,30 +122,39 @@ function createKeyId(key) {
 
 //#endregion
 //#region src/helpers/get.ts
-function get(obj, path) {
-	const list = [];
-	let arr = false;
-	const deepGet = (obj, path, index, arrayIndex) => {
-		if (!isDefined(obj)) return;
-		if (!path[index]) list.push(arrayIndex !== void 0 ? {
-			v: obj,
+const isLeaf$1 = (value) => isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint";
+function deepGet(list, obj, path, index, arrayIndex) {
+	if (!isDefined(obj)) return;
+	if (!path[index]) list.push({
+		v: obj,
+		i: arrayIndex
+	});
+	else {
+		const value = obj[path[index]];
+		if (!isDefined(value)) return;
+		if (index === path.length - 1 && isLeaf$1(value)) list.push({
+			v: toString(value),
 			i: arrayIndex
-		} : obj);
-		else {
-			const value = obj[path[index]];
-			if (!isDefined(value)) return;
-			if (index === path.length - 1 && (isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint")) list.push(arrayIndex !== void 0 ? {
-				v: toString(value),
-				i: arrayIndex
-			} : toString(value));
-			else if (isArray(value)) {
-				arr = true;
-				for (let i = 0, len = value.length; i < len; i += 1) deepGet(value[i], path, index + 1, i);
-			} else if (path.length) deepGet(value, path, index + 1, arrayIndex);
+		});
+		else if (isArray(value)) for (let i = 0, len = value.length; i < len; i += 1) deepGet(list, value[i], path, index + 1, i);
+		else deepGet(list, value, path, index + 1, arrayIndex);
+	}
+}
+function get(obj, path) {
+	if (isString(path)) path = path.split(".");
+	for (let index = 0;; index++) {
+		if (!isDefined(obj)) return;
+		if (!path[index]) return obj;
+		const value = obj[path[index]];
+		if (!isDefined(value)) return;
+		if (index === path.length - 1 && isLeaf$1(value)) return toString(value);
+		if (isArray(value)) {
+			const list = [];
+			deepGet(list, obj, path, index, 0);
+			return list;
 		}
-	};
-	deepGet(obj, isString(path) ? path.split(".") : path, 0);
-	return arr ? list : list[0];
+		obj = value;
+	}
 }
 
 //#endregion
@@ -188,22 +196,16 @@ const Config = Object.freeze({
 
 //#endregion
 //#region src/tools/fieldNorm.ts
-function isWordSeparator(code) {
-	return code >= 9 && code <= 13 || code === 32 || code === 160;
-}
+const RARE_SEPARATORS = /[\t-\r\xa0]/;
 function norm(weight = 1, mantissa = 3) {
 	const cache = /* @__PURE__ */ new Map();
 	const m = Math.pow(10, mantissa);
 	return {
 		get(value) {
-			let numTokens = 0;
-			let inWord = false;
-			for (let i = 0; i < value.length; i++) if (!isWordSeparator(value.charCodeAt(i))) {
-				if (!inWord) {
-					numTokens++;
-					inWord = true;
-				}
-			} else inWord = false;
+			if (RARE_SEPARATORS.test(value)) value = value.replace(/[\t-\r\xa0]/g, " ");
+			const len = value.length;
+			let numTokens = len && value.charCodeAt(0) !== 32 ? 1 : 0;
+			for (let p = value.indexOf(" "); p >= 0; p = value.indexOf(" ", p + 1)) if (p + 1 < len && value.charCodeAt(p + 1) !== 32) numTokens++;
 			if (numTokens === 0) numTokens = 1;
 			if (cache.has(numTokens)) return cache.get(numTokens);
 			const n = Math.round(m / Math.pow(numTokens, .5 * weight)) / m;
@@ -275,12 +277,9 @@ var FuseIndex = class {
 		for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i > idx) this.records[i].i -= 1;
 	}
 	removeAll(indices) {
-		const toRemove = /* @__PURE__ */ new Set();
-		for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
-		if (toRemove.size === 0) return;
-		this.records = this.records.filter((r) => !toRemove.has(r.i));
-		const sorted = Array.from(toRemove).sort((a, b) => a - b);
-		for (const record of this.records) {
+		const sorted = Array.from(new Set(indices.filter((v) => Number.isInteger(v) && v >= 0))).sort((a, b) => a - b);
+		if (!sorted.length) return;
+		this.records = this.records.filter((record) => {
 			let lo = 0;
 			let hi = sorted.length;
 			while (lo < hi) {
@@ -288,8 +287,10 @@ var FuseIndex = class {
 				if (sorted[mid] < record.i) lo = mid + 1;
 				else hi = mid;
 			}
+			if (sorted[lo] === record.i) return false;
 			record.i -= lo;
-		}
+			return true;
+		});
 	}
 	getValueForItemAtKeyId(item, keyId) {
 		return item[this._keysMap[keyId]];
@@ -319,26 +320,14 @@ var FuseIndex = class {
 				for (let i = 0, len = value.length; i < len; i += 1) {
 					const item = value[i];
 					if (!isDefined(item)) continue;
-					if (isString(item)) {
-						if (!isBlank(item)) {
-							const subRecord = {
-								v: item,
-								i,
-								n: this.norm.get(item)
-							};
-							subRecords.push(subRecord);
-						}
-					} else if (isDefined(item.v)) {
-						const text = isString(item.v) ? item.v : toString(item.v);
-						if (!isBlank(text)) {
-							const subRecord = {
-								v: text,
-								i: item.i,
-								n: this.norm.get(text)
-							};
-							subRecords.push(subRecord);
-						}
-					}
+					const str = isString(item);
+					const text = str ? item : toString(item.v);
+					const idx = str ? i : item.i;
+					if (!isBlank(text)) subRecords.push({
+						v: text,
+						i: idx,
+						n: this.norm.get(text)
+					});
 				}
 				record.$[keyIndex] = subRecords;
 			} else if (isString(value) && !isBlank(value)) {
@@ -1409,8 +1398,8 @@ var Fuse = class {
 		}
 		if (indicesToRemove.length) {
 			if (this._invertedIndex) removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove);
-			const toRemove = new Set(indicesToRemove);
-			this._docs = this._docs.filter((_, i) => !toRemove.has(i));
+			let j = 0;
+			this._docs = this._docs.filter((_, i) => i !== indicesToRemove[j] || (j++, false));
 			this._myIndex.removeAll(indicesToRemove);
 			this._invalidateSearcherCache();
 		}

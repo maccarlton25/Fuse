@@ -1,8 +1,4 @@
-export function isArray(value: unknown): value is any[] {
-  return !Array.isArray
-    ? getTag(value) === '[object Array]'
-    : Array.isArray(value)
-}
+export const isArray = Array.isArray as (value: unknown) => value is any[]
 
 // Adapted from: https://github.com/lodash/lodash/blob/master/.internal/baseToString.js
 const INFINITY = 1 / 0
@@ -53,7 +49,9 @@ export function isDefined<T>(value: T | undefined | null): value is T {
 }
 
 export function isBlank(value: string): boolean {
-  return !value.trim().length
+  // A printable non-space ASCII first char can't be trimmed: skip trim().
+  const c = value.charCodeAt(0)
+  return !(c > 32 && c < 127) && !value.trim().length
 }
 
 // Gets the `toStringTag` of `value`.
