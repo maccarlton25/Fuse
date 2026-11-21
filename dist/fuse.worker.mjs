@@ -385,9 +385,10 @@ function convertMaskToIndices(matchmask, minMatchCharLength) {
 
 //#endregion
 //#region src/search/bitap/search.ts
-let bufA = /* @__PURE__ */ new Int32Array(256);
-let bufB = /* @__PURE__ */ new Int32Array(256);
-let charBuf = /* @__PURE__ */ new Int32Array(256);
+const KEEP = 3e4;
+let bufA = /* @__PURE__ */ new Int32Array(0);
+let bufB = /* @__PURE__ */ new Int32Array(0);
+let charBuf = /* @__PURE__ */ new Int32Array(0);
 const calcScore = (errors, loc, patternLen, expectedLocation, distance, ignoreLocation) => {
 	const accuracy = errors / patternLen;
 	if (ignoreLocation) return accuracy;
@@ -433,9 +434,14 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 		if (!i) {
 			low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1)) | 0;
 			if (bitArr.length < finish + 2) {
-				bitArr = bufA = new Int32Array(finish * 2 + 4);
-				lastBitArr = bufB = new Int32Array(finish * 2 + 4);
-				cm = charBuf = new Int32Array(finish * 2 + 4);
+				bitArr = new Int32Array(finish * 2 + 4);
+				lastBitArr = new Int32Array(finish * 2 + 4);
+				cm = new Int32Array(finish * 2 + 4);
+				if (finish < KEEP) {
+					bufA = bitArr;
+					bufB = lastBitArr;
+					charBuf = cm;
+				}
 			}
 			for (let k = low; k <= finish; k += 1) cm[k] = k > textLen ? 0 : table[text.charCodeAt(k - 1)] ?? patternAlphabet[text.charCodeAt(k - 1)] | 0;
 		}
