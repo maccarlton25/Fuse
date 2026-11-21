@@ -1091,7 +1091,7 @@ var Fuse = class {
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
 		const records = this._myIndex.records;
-		const results = [];
+		const results = !heap && [];
 		for (const record of records) {
 			if (!record) continue;
 			const text = record.v;
@@ -1132,7 +1132,7 @@ var Fuse = class {
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
 		const records = this._myIndex.records;
 		const keys = this._normalizedKeys();
-		const results = [];
+		const results = !heap && [];
 		let matches = [];
 		for (const record of records) {
 			if (!record) continue;

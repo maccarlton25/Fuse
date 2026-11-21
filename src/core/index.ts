@@ -373,7 +373,8 @@ export default class Fuse<T> {
     const requireAllTokens =
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
     const records = this._myIndex.records
-    const results: InternalResult[] = []
+    // Only collected without a heap; with one, the heap holds the results.
+    const results = (!heap && []) as InternalResult[]
 
     // Iterate over every string in the index
     for (const record of records) {
@@ -510,7 +511,8 @@ export default class Fuse<T> {
       this.options.useTokenSearch && this.options.tokenMatch === 'all'
     const records = this._myIndex.records
     const keys = this._normalizedKeys()
-    const results: InternalResult[] = []
+    // Only collected without a heap; with one, the heap holds the results.
+    const results = (!heap && []) as InternalResult[]
     // One matches array per record, reused until a record actually matches,
     // instead of a fresh array per key per record.
     let matches: MatchScore[] = []
