@@ -161,15 +161,18 @@ export default class FuseIndex<T = any> {
         toRemove.add(v)
       }
     }
-    const sorted = Array.from(toRemove).sort((a, b) => a - b)
-
-    if (!sorted.length) {
+    if (toRemove.size === 0) {
       return
     }
 
-    // One pass: the binary search both tests membership and yields the
-    // shift (count of removed indices strictly less than record.i).
-    this.records = this.records.filter((record) => {
+    // Two passes, as in the baseline: membership is tested on every record
+    // before any is shifted, so a record object listed twice (possible in a
+    // hand-built or parsed index) is tested and shifted exactly as there.
+    this.records = this.records.filter((r) => !toRemove.has(r.i))
+
+    const sorted = Array.from(toRemove).sort((a, b) => a - b)
+    for (const record of this.records) {
+      // shift = count of removed indices strictly less than record.i
       let lo = 0
       let hi = sorted.length
       while (lo < hi) {
@@ -177,10 +180,8 @@ export default class FuseIndex<T = any> {
         if (sorted[mid] < record.i) lo = mid + 1
         else hi = mid
       }
-      if (sorted[lo] === record.i) return false
       record.i -= lo
-      return true
-    })
+    }
   }
   getValueForItemAtKeyId(item: any, keyId: string): any {
     return item[this._keysMap[keyId]]

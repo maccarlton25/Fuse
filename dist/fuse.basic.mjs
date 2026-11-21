@@ -268,9 +268,10 @@ var FuseIndex = class {
 	removeAll(indices) {
 		const toRemove = /* @__PURE__ */ new Set();
 		for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
+		if (toRemove.size === 0) return;
+		this.records = this.records.filter((r) => !toRemove.has(r.i));
 		const sorted = Array.from(toRemove).sort((a, b) => a - b);
-		if (!sorted.length) return;
-		this.records = this.records.filter((record) => {
+		for (const record of this.records) {
 			let lo = 0;
 			let hi = sorted.length;
 			while (lo < hi) {
@@ -278,10 +279,8 @@ var FuseIndex = class {
 				if (sorted[mid] < record.i) lo = mid + 1;
 				else hi = mid;
 			}
-			if (sorted[lo] === record.i) return false;
 			record.i -= lo;
-			return true;
-		});
+		}
 	}
 	getValueForItemAtKeyId(item, keyId) {
 		return item[this._keysMap[keyId]];

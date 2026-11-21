@@ -541,3 +541,21 @@ describe('FuseIndex.removeAll accepts any iterable, like the baseline (D1)', () 
     expect(JSON.stringify(a.toJSON())).toBe(JSON.stringify(b.toJSON()))
   })
 })
+
+describe('FuseIndex.removeAll with one record object listed twice (D3)', () => {
+  test('shared records in a parsed index match the baseline', () => {
+    for (const removeIdx of [[0], [1], [2], [0, 3], [5], [1, 2, 3]]) {
+      const build = (F: any) => {
+        const s = { i: 2, $: { 0: { v: 's', n: 1 } } }
+        const r = (i: number) => ({ i, $: { 0: { v: 'r' + i, n: 1 } } })
+        const idx = F.parseIndex({
+          keys: [{ path: ['k'], id: 'k', weight: 1, src: 'k' }],
+          records: [r(0), s, r(3), s, r(4)]
+        })
+        idx.removeAll(removeIdx)
+        return JSON.stringify(idx.toJSON())
+      }
+      expect(build(Fuse)).toBe(build(BaselineFuse))
+    }
+  })
+})
