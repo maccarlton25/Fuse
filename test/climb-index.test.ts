@@ -2,6 +2,12 @@ import get from '../src/helpers/get'
 import norm from '../src/tools/fieldNorm'
 import { isBlank } from '../src/helpers/typeGuards'
 import FuseIndex from '../src/tools/FuseIndex'
+// @ts-ignore untyped locked oracle
+import BaselineFuse from '../bench/baseline-fuse.mjs'
+
+process.env.EXTENDED_SEARCH_ENABLED = 'true'
+process.env.TOKEN_SEARCH_ENABLED = 'true'
+const { default: Fuse } = await import('../src/entry')
 
 // Reference implementations copied from the pre-optimization code; the
 // optimized versions must agree with them exactly.
@@ -160,6 +166,57 @@ describe('FuseIndex.removeAll matches the Set-based reference', () => {
         for (const r of ref) r.i -= sorted.filter((v) => v < r.i).length
       }
       expect(JSON.stringify(a.records)).toBe(JSON.stringify(ref))
+    }
+  })
+})
+
+// Differential checks against the locked baseline oracle.
+const snap = (f: any, queries: string[]) =>
+  JSON.stringify({
+    index: f.getIndex().toJSON(),
+    hits: queries.map((q) => f.search(q, { includeScore: true }))
+  })
+
+describe('Fuse.remove on sparse docs matches the baseline', () => {
+  test('hole at a removed index keeps docs and index in step', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const docs = ['apple', , 'banana', 'cherry'] as any[]
+    const a = new Fuse(docs.slice())
+    const b = new BaselineFuse(docs.slice())
+    const pred = (_: any, i: number) => i === 1 || i === 2
+    expect(JSON.stringify(a.remove(pred))).toBe(JSON.stringify(b.remove(pred)))
+    expect(snap(a, ['cherry', 'apple'])).toBe(snap(b, ['cherry', 'apple']))
+  })
+
+  test('random sparse docs, string and object lists, token search', () => {
+    let seed = 11
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const words = ['apple', 'banana', 'cherry', 'date', ' ', '']
+    for (let k = 0; k < 200; k++) {
+      const n = 1 + Math.floor(rnd() * 10)
+      const objects = rnd() < 0.5
+      const docs: any[] = new Array(n)
+      for (let i = 0; i < n; i++) {
+        if (rnd() < 0.3) continue // hole
+        const w = words[Math.floor(rnd() * words.length)]
+        // eslint-disable-next-line no-sparse-arrays
+        docs[i] = objects ? { t: w, tags: [w, , 'x' + i] } : w
+      }
+      if (objects && docs[0] === undefined) docs[0] = { t: 'first' }
+      if (!objects && docs[0] === undefined) docs[0] = 'first'
+      if (rnd() < 0.3) (docs as any).extra = 'not an index'
+      const opts: any = objects ? { keys: ['t', 'tags'] } : {}
+      if (rnd() < 0.5) opts.useTokenSearch = true
+      const a = new Fuse(docs.slice(), opts)
+      const b = new BaselineFuse(docs.slice(), opts)
+      const picks = new Set<number>()
+      for (let i = 0; i < n; i++) if (rnd() < 0.4) picks.add(i)
+      const pred = (_: any, i: number) => picks.has(i)
+      expect(JSON.stringify(a.remove(pred))).toBe(
+        JSON.stringify(b.remove(pred))
+      )
+      const qs = ['apple', 'cherry', 'x3', 'first']
+      expect(snap(a, qs)).toBe(snap(b, qs))
     }
   })
 })

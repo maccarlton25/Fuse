@@ -1425,8 +1425,8 @@ var Fuse = class {
 		}
 		if (indicesToRemove.length) {
 			if (this._invertedIndex) removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove);
-			let j = 0;
-			this._docs = this._docs.filter((_, i) => i !== indicesToRemove[j] || (j++, false));
+			const toRemove = new Set(indicesToRemove);
+			this._docs = this._docs.filter((_, i) => !toRemove.has(i));
 			this._myIndex.removeAll(indicesToRemove);
 			this._invalidateSearcherCache();
 		}
