@@ -32,10 +32,8 @@ function walk(
     if (!path[index]) {
       break
     }
+    // A missing value ends the walk at the top of the next turn.
     const value = obj[path[index]]
-    if (!isDefined(value)) {
-      return list
-    }
     // If we're at the last value in the path, and if it's a
     // string/number/bool, it is the hit.
     if (index === path.length - 1 && isLeaf(value)) {

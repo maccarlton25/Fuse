@@ -127,7 +127,6 @@ function walk(obj, path, index, list, arrayIndex) {
 		if (!isDefined(obj)) return list;
 		if (!path[index]) break;
 		const value = obj[path[index]];
-		if (!isDefined(value)) return list;
 		if (index === path.length - 1 && isLeaf$1(value)) {
 			obj = toString(value);
 			break;
