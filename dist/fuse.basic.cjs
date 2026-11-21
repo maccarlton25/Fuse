@@ -492,6 +492,10 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 	let mv = 0;
 	let score = m;
 	let best = m;
+	let kmax = Math.min(m, Math.floor(threshold * m));
+	if (kmax < m && (kmax + 1) / m <= threshold) kmax++;
+	if (kmax / m > threshold) kmax--;
+	if (!(distance > 0)) kmax = m;
 	if (j - stop > 32 && threshold >= 0 && (j < n ? text.slice(stop, j).includes(pattern) : text.includes(pattern, stop))) return -1;
 	while (j-- > stop) {
 		const c = text.charCodeAt(j);
@@ -508,7 +512,7 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 		mv = ph & xv;
 		if (ignoreLocation) {
 			if (score < best) best = score;
-		} else if (calcScore(score, j, m, expected, distance, ignoreLocation) <= threshold) return 1;
+		} else if (score <= kmax && calcScore(score, j, m, expected, distance, false) <= threshold) return 1;
 	}
 	return best < m && best / m <= threshold ? ~best : 0;
 }
