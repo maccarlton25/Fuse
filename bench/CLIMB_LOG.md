@@ -447,3 +447,311 @@ and 9752 B (+myers, +221).
 - **D3** (non-blocking, contrived): the same record object appearing twice in `parseIndex` records changes the `removeAll` result. Restoring the two-pass `removeAll` fixes D1 and D3 together.
 - **Nit:** `isArray = Array.isArray` is captured when the module loads.
 - **Commit hygiene:** merge `85d03e8` has an empty body; the `.d.ts` change in `f8e3afe` was only undone in `c90758b`.
+
+## Generation 3
+
+Branch `climb/final`, built from `climb/gen2-best` (`c481aa4`) by a new lead
+(`fx-cloud (gen3-lead)`, board thread `msg_9b051d3e-c670-469a-8148-676d2ec55680_1`).
+The original architect launched the three generation 3 workers and then ran
+out of sandbox time; it did not review, merge or verify anything below. One
+branch was merged, with `--no-ff`; its individual commits are preserved.
+There was no conflict of any kind (the branch descends from `c481aa4`), and the
+rebuilt `dist/` is byte-identical to the one the branch committed.
+
+This generation was judged on safety first. Four branches or attempts were
+reviewed or measured and three were left out. Every first review, and one of
+the two re-reviews, found a defect that the verifier and all the shared
+guards scored as a pass.
+
+### Branches
+
+| Branch | Reviewed at | Merge commit | Review | Verdict | In climb/final? |
+|---|---|---|---|---|---|
+| `climb/gen3-scan` | `d1a8bc7` | — | `msg_ee7e02ba-d4c0-4e7a-a89b-ec7be3b1f9fc_1` | **REJECT**, with a named two-line fix | No, superseded by the next row |
+| `climb/gen3-scan` + fix-up | `f55c09d` | `5c0c097` | `msg_fc0d722e-a75e-4f8c-8492-fc607e5dc3ba_1` (targeted) | ACCEPT WITH FOLLOW-UPS | Yes |
+| `climb/gen3-harden` | `9fd1956` | — | `msg_406ef0ad-15d2-4494-9886-33544df67e68_1` | **REJECT**, with a named fix | No |
+| `climb/gen3-harden` + fix-up | `77d7039` | — | `msg_fe84c34f-244d-4886-bdfd-350466238858_1` (targeted) | **REJECT** | **No** |
+| `climb/gen3-index` | `09c1e2f` | — | `msg_d4c7302c-96a3-41d3-a1f0-54c38d73738b_1` | **REJECT** | **No** |
+| `climb/gen3-nonstring` | never pushed | — | worker thread `msg_80096dce-25c5-4555-8bf9-7a50ab1a393e_1` | Exact fix over its byte limit; the worker stopped as briefed | **No** |
+
+**`climb/gen3-scan` (merged at `f55c09d`).** The required fix of this
+generation: a lone exact copy of the query in a window of 33 to 256 positions
+is now settled by a native substring search instead of a position-by-position
+walk (`6b0b144`); an integer edit bound is tested before `calcScore`
+(`2a16df1`); and the `ignoreLocation` pass stops at the first passing start
+when the caller only needs truth (`bc85d8a`, generation 2's finding F1). The
+first review confirmed the fix (`FIELD_LENGTH_PROBE_OK` in 4 of 4 runs; every
+`lone hit` cell 0.66–0.99 of the baseline, against up to 2.06 on
+`climb/gen2-best`; 148,000 window-edge cases and 585,000 `k/m` boundary cases
+with 0 mismatches; a separate 13-run copy of the lone-hit modes read
+`lone hit+match` at 200 as 1.46 once and 0.73–1.18 otherwise, which the
+reviewer counted as noise) and rejected the branch for one defect: `2a16df1` computed
+the bound as `Math.floor(threshold * m)`, so a BigInt `threshold` with
+`ignoreLocation` or `distance: -1` threw `Cannot mix BigInt and other types`
+where the baseline and `climb/gen2-best` return a result (36 new
+candidate-only throws in 1,065 odd-option cases). The fix-up `f55c09d`
+replaces the arithmetic with a comparison-only loop (9829 → 9811 B).
+The targeted re-review at `f55c09d` returned **ACCEPT WITH FOLLOW-UPS**: the
+loop equals the brute-force bound in 33,718 `(m, threshold)` pairs (0 wrong);
+1,082,760 `Fuse.match` cases and 33,000 whole searches around every `k/m`
+boundary match the baseline byte for byte; in a 9,348-case grid of odd option
+types the branch gives the same output as `climb/gen2-best` for every
+stateless value; `FIELD_LENGTH_PROBE_OK` in 3 of 3 runs. Its verifier read
+9.2059x train and 9.1903x holdout.
+
+**Why `climb/gen3-harden` was left out.** It restored three development-build
+details that generation 2's reviewers had classed as non-blocking (the
+wording of one `TypeError`, the resolved `options` on `Fuse.parseQuery` leaf
+searchers, an unused array in the record scans; 9752 → 9750 B). Both reviews
+rejected it for the way commit `354d78e` makes `Fuse.parseQuery` read a
+user-supplied options object, which a stateful getter can observe:
+- First review, at `9fd1956`: the `ExtendedSearch` constructor resolved the
+  options and then passed the raw object on, so each key was read twice
+  (21 reads against the baseline's 10). With a `threshold` getter that
+  changes after its first read, `Fuse.parseQuery({title:'abd'}, opts)` built a
+  searcher that returns `{"isMatch":false,"score":1}` where the baseline and
+  `climb/gen2-best` return `{"isMatch":true,"score":0.333…}` (52 of 216
+  getter cases). Fixed by `77d7039` (+1 B).
+- Targeted re-review, at `77d7039`: count and keys now equal the baseline in
+  312 of 312 traces, but for `$fuzzy` leaves the nine keys are read in a
+  different order than the baseline's (and `climb/gen2-best`'s). With a Proxy
+  whose `threshold` depends on how many reads came before, 784 of 56,160
+  cases differ where `climb/gen2-best` matches the baseline. Named fix: about
+  8 lines in `matchers.ts`, +34 B (scratch patch in attachment
+  `att_0c490a0c-3fd2-40d2-92dc-3fe9de23f66b`, not pushed).
+
+The lead's rules allowed one fix-up and one targeted re-review per branch;
+both were used. The three items stay as they were after generation 2.
+
+**Why `climb/gen3-index` was left out.** It merges the rejected
+`climb/gen2-index` (`c90758b`), repairs D1 to D3 (all three verified fixed:
+0 differences in 12,006 `removeAll` cases and 16,004 index-build cases) and
+adds two speed commits. The reviewer measured the index workload at about
+1.65x over `climb/gen2-best` (about 8.4 → 5.1 ms, +126 B) and found three
+defects that came in with `c90758b` and that the generation 2 review missed;
+`climb/gen2-best` passes on all three:
+- **F1 (blocking):** the word count in `src/tools/fieldNorm.ts` calls
+  `RARE_SEPARATORS.test(value)` and `value.indexOf`, so index creation throws
+  where the baseline returns for a non-primitive string-like in a string list:
+  `new Fuse(['x', { trim(){return 'y'}, toString(){ throw new TypeError('nope') } }])`.
+  Named fix: 2 lines, +5 B.
+- **F2 (slowdown outside the benchmark):** the `indexOf` word count is slower
+  than the baseline on fields of short words: 2.50–2.56x on `'w '`×1M,
+  2.38–2.64x on 2,000 fields of `'a b c d e '`×40, 1.63x on 2-character
+  words, 1.15–1.28x on a `'red apple N'` string list. It is faster on words
+  of 5 characters or more, which is what the verifier's vocabulary has.
+  Restoring `climb/gen2-best`'s loop costs −34 B and leaves the index
+  workload about 1.27x over `climb/gen2-best` (about +4% composite).
+- **F3:** `get()` and the inlined default getter read the key path in a
+  different count and order. With a Proxy path whose `length` trap is
+  stateful, `Fuse.config.getFn({k:{x:5}}, proxyPath)` returns `"5"` where the
+  baseline returns `5`. No measured fix (the reviewer estimates 30–40 B and
+  recommended a waiver).
+
+The lead did not run a fix-up: only F1 has a named fix with a measured cost;
+F2 is the class of slowdown this swarm rejected the prefilter for, and fixing
+it halves what the branch is worth; F3 is the class of defect generation 2
+was rejected for. This is the third review of the index work and the third to
+find defects the previous one missed. `index_diacritics_mutate` therefore
+stays at about 1.0x. Repros: attachment
+`att_869c9fab-4f03-4e94-8fb5-274c52c59679`.
+
+**`climb/gen3-nonstring` (never pushed).** The harden worker found that a
+`text` or `pattern` that is not a string diverges from the baseline on
+`climb/gen2-best` (see "Behaviour differences" in the Final section). The lead
+launched one fix-up worker with a 350 B limit. Its only exact fix is a port of
+the baseline kernel for non-string text behind a `typeof` guard, **+500 B**
+(9752 → 10252 B; a first version was +582 B), so it pushed nothing, as
+briefed. Partial fixes it measured: +19 B (pattern-side messages) and +39 B
+(also the baseline-only throws and text-side messages); neither removes the
+candidate-only throws on array text. Patch and test (unreviewed): attachments
+`att_09d2eb8c-8502-40f9-8cd4-a45ece510d2a` and
+`att_42a7fd6b-4aee-44c5-aec7-59d582a8b7c4` on its thread.
+
+### Open follow-ups from the generation 3 reviews (not implemented here)
+
+**gen3-scan** (`msg_ee7e02ba`, `msg_fc0d722e`):
+1. A 1M-character field with `distance: 1e6, threshold: 0.9` reads 1.12–1.22x of `climb/gen2-best`'s time after a long warm-up sequence in the same process (6 of 6 runs; 0.94–0.97x in a fresh process; 0.37–0.40x of the baseline either way). The reviewer's profile puts the gap in `canMatch` (95.6 against 53.4 ms, repeated OSR cycles) and suspects the loop shape from `bc85d8a`, not the 32 guard or `kmax`.
+2. For an array `text` of 33 to 256 elements the branch returns an `Array.includes`-based result where `climb/gen2-best` threw `charCodeAt is not a function` (differs from the baseline in 65 of 1,026 cases). Same class as the non-string divergence below.
+3. Not attempted, no measurements: hoisting the `ignoreLocation` test out of the loop, the `??` fallback above U+00FF, the per-call destructuring in `searchIn`. The worker's design note for token search (a per-text character-presence set, to reject a term before the Myers pass) is on thread `msg_97dc6e82`.
+4. The comparison loop in `f55c09d` runs up to `m + 1` times per `canMatch` call. On 32-character queries over 20,000 short texts it is 4–14% slower than `d1a8bc7` with default options (5 of 5 runs) and 1.4–12% slower with `ignoreLocation`; no verifier workload is slower in every run. Cheapest fix: compute `kmax` once per pattern chunk, or keep the arithmetic behind `typeof threshold === 'number'` (an estimated 20–30 B).
+5. A `threshold` that is an object with a stateful `valueOf` is read a different number of times than in the baseline (already true of `climb/gen2-best`, which reads it about twice as often). In the re-reviewer's grid the cases where both builds return and differ from the baseline go from 90 on `climb/gen2-best` to 58 here: 35 cases now match that did not, and 3 that matched on `climb/gen2-best` no longer do (all 3 come from `2a16df1`/`bc85d8a`, not from the fix-up). No build can match without copying the baseline's exact read sequence; the reviewer did not treat it as blocking and said so explicitly.
+
+**gen3-harden** (`msg_406ef0ad`, `msg_fe84c34f`; not merged): the `$fuzzy` read-order fix above (+34 B). With it the second reviewer saw nothing else blocking. Also noted: two `no-unused-expressions` eslint errors in `src/core/index.ts` that `climb/gen2-best` already has.
+
+**gen3-index** (`msg_d4c7302c`; not merged): F1, F2 and F3 above. Nits: `isArray = Array.isArray` is captured at module load; merge `39639ce` quotes gzip 9716/9642 B where the verifier reads 9813/9752 B; merge `85d03e8` has an empty body.
+
+**Still open from generations 1 and 2** (unchanged by this generation): bitap 3 (`Int32Array(256)` per chunk), extended 1 (`isInverse` through `.some`, `MULTI_MATCH_TYPES.has` per matcher), topk 2 (`_findMatches` wrapper allocates), gen2-core 4 (unused `results` array), gen2-size 1 and 2 (`Fuse.parseQuery` leaf `searcher.options`; `value.toLowerCase` wording). Extended 3 is **closed as wrong**: the harden worker showed, and its reviewer confirmed, that the `existing.matches.push` branch in `_searchLogical` is reachable through a parsed index with a repeated `i`, and that the baseline merges the same way.
+
+## Final
+
+`climb/final` is `climb/gen2-best` plus `climb/gen3-scan` at `f55c09d`
+(merge `5c0c097`). Everything in this section was measured by the
+generation 3 lead in its own sandbox on that merge commit, unless it says
+otherwise. The original architect did not verify this tree.
+
+### Gate on the final tree (`5c0c097`)
+
+```
+npm run typecheck                     -> OK
+npm run build                         -> OK
+npm test                              -> Test Files 32 passed (32) / Tests 849 passed (849)
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5492 seed=101 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5589 seed=102 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5581 seed=103 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5328 seed=104 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5660 seed=105 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5475 seed=106 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5563 seed=107 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5542 seed=108 candidate=../dist/fuse.mjs
+MATCH_FUZZ_OK cases=150000 seed=101 mismatches=0 candThrowsOnly=0 baseThrowsOnly=9876 baselineMatchRate=0.391 candidate=../dist/fuse.mjs
+MATCH_FUZZ_OK cases=150000 seed=102 mismatches=0 candThrowsOnly=0 baseThrowsOnly=10147 baselineMatchRate=0.391 candidate=../dist/fuse.mjs
+MATCH_FUZZ_OK cases=150000 seed=103 mismatches=0 candThrowsOnly=0 baseThrowsOnly=10133 baselineMatchRate=0.389 candidate=../dist/fuse.mjs
+candidate retains -0.01 MB heap and 0.02 MB ArrayBuffer more than baseline
+RETENTION_PROBE_OK
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=101 mismatches=0 candidate=../dist/fuse.mjs
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=102 mismatches=0 candidate=../dist/fuse.mjs
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=103 mismatches=0 candidate=../dist/fuse.mjs
+field-length probe run 1: FIELD_LENGTH_PROBE_OK (0 SLOWER, 0 RESULT MISMATCH lines)
+field-length probe run 2: FIELD_LENGTH_PROBE_OK (0 SLOWER, 0 RESULT MISMATCH lines)
+f6831f6ca705fa7f76cb8ceb5a8aed4c85b8dad0ed53e2f7ec36e61f3fb99693  bench/hillclimb.mjs     (matches AGENTS.md)
+2c4938f54cacee4ab2e68aa3b3c6126c04d9e4394baa3d691a36acc1907ef71f  bench/baseline-fuse.mjs (matches AGENTS.md)
+git status --short dist/              -> empty
+```
+
+Test count: 530 on `climb/gen2-best`, + 4 (`test/bitap-scan-edges.test.ts`),
++ 315 (`test/bitap-threshold-types.test.ts`) = 849.
+
+**Field-length probe rev 2**: `FIELD_LENGTH_PROBE_OK` on both runs, with no
+`SLOWER` and no `RESULT MISMATCH` line (it printed `FAIL` on `climb/gen2-best`).
+The `lone hit` cells, candidate/baseline time, limit 1.25:
+
+| mode | field length | run 1 | run 2 |
+|---|---|---|---|
+| `lone hit dflt` | 40 | 0.79 | 0.77 |
+| `lone hit dflt` | 200 | 0.79 | 0.79 |
+| `lone hit dflt` | 1,000 | 0.87 | 0.81 |
+| `lone hit dflt` | 5,000 | 0.93 | 0.87 |
+| `lone hit dflt` | 25,000 | 0.97 | 1.09 |
+| `lone hit` | 40 | 0.77 | 0.80 |
+| `lone hit` | 200 | 0.80 | 0.78 |
+| `lone hit` | 1,000 | 0.84 | 0.79 |
+| `lone hit` | 5,000 | 0.98 | 0.90 |
+| `lone hit` | 25,000 | 0.94 | 0.96 |
+| `lone hit+match` | 40 | 0.75 | 0.60 |
+| `lone hit+match` | 200 | 0.93 | 0.90 |
+| `lone hit+match` | 1,000 | 0.72 | 0.75 |
+| `lone hit+match` | 5,000 | 0.65 | 0.78 |
+| `lone hit+match` | 25,000 | 0.41 | 0.44 |
+
+Every other cell (30 per run) is 0.06–0.73 of the baseline.
+
+### Verifier runs on `climb/final` (`5c0c097`)
+
+All five runs PASS with 38 parity checks. `dist/fuse.min.mjs` is 9811 B gzip
+(−3.06% vs the 10199 B base, cap 10628 B). Each cell is speedup
+(baseline→candidate ms).
+
+| run | bitap_fuzzy | bitap_matches | topk_limit10 | extended_logical | token_inverted | index_diacritics_mutate | composite | gzip |
+|---|---|---|---|---|---|---|---|---|
+| train #1 | 14.785x (746.2→50.5 ms) | 12.387x (771.3→62.3) | 15.766x (736.1→46.7) | 8.839x (218.0→24.7) | 21.851x (1734.7→79.4) | 1.000x (6.11→6.11) | **9.0728x** | 9811 B |
+| train #2 | 16.924x (892.8→52.7 ms) | 14.011x (962.1→68.7) | 18.000x (845.2→47.0) | 8.355x (227.2→27.2) | 23.480x (1895.5→80.7) | 0.922x (5.52→5.98) | **9.5787x** | 9811 B |
+| train #3 | 14.908x (745.9→50.0 ms) | 12.717x (771.6→60.7) | 15.965x (737.8→46.2) | 8.883x (221.2→24.9) | 22.135x (1743.1→78.7) | 1.004x (5.93→5.91) | **9.1771x** | 9811 B |
+| holdout #1 | 14.588x (751.6→51.5 ms) | 12.301x (777.6→63.2) | 15.533x (750.2→48.3) | 8.895x (218.6→24.6) | 21.629x (1709.4→79.0) | 0.994x (5.28→5.31) | **9.0051x** | 9811 B |
+| holdout #2 | 15.238x (764.1→50.1 ms) | 12.514x (796.3→63.6) | 16.370x (760.9→46.5) | 8.996x (219.3→24.4) | 22.257x (1738.7→78.1) | 1.012x (5.84→5.77) | **9.2651x** | 9811 B |
+
+- Composite: train 9.073–9.579x (median 9.1771x), holdout 9.005–9.265x. Holdout agrees with train.
+- `climb/gen2-best` read 8.9277x train and 8.9001x holdout in this sandbox on
+  the same day (one run each), so the merge is worth a few percent here; the
+  first scan reviewer's same-process A/B puts `token_inverted` 3–5% faster and
+  `bitap_fuzzy` 0–10% faster, the rest within noise.
+- `index_diacritics_mutate` is in the noise band (0.92–1.01x): no index work
+  is merged.
+- Other sandboxes read the same code differently. `f55c09d` (same tree apart
+  from this log): re-reviewer 9.2059x train / 9.1903x holdout; fix-up worker
+  9.2730x / 9.2147x. `climb/gen2-best` read 9.76–10.07x train and
+  10.23–10.54x holdout in the three generation 3 reviewers' sandboxes, where
+  the baseline itself ran about 1.5x slower than here.
+
+### Per-merge `node bench/climb-profile.mjs all --rounds 7`
+
+The indicative in-process profiler: baseline→candidate ms and speedup. The
+baseline column drifts between runs.
+
+| stage (HEAD) | fuzzy | matches | topk | extended | token | index | geomean | gzip |
+|---|---|---|---|---|---|---|---|---|
+| gen2-best (`c481aa4`) | 527.84→53.41 ms, 9.883x | 548.51→64.50, 8.505x | 499.13→48.93, 10.200x | 167.91→29.59, 5.675x | 1206.24→91.48, 13.185x | 6.55→6.70, 0.978x | 6.3039x | 9752 B |
+| + gen3-scan (`5c0c097`) | 537.38→50.53 ms, 10.635x | 553.96→63.32, 8.749x | 621.85→53.00, 11.732x | 171.70→29.97, 5.729x | 1212.11→83.25, 14.559x | 7.11→6.77, 1.050x | 6.7619x | 9811 B |
+
+### Bundle size
+
+`dist/fuse.min.mjs` is 9811 B gzip: +59 B over `climb/gen2-best` (9752 B),
+388 B below the 10199 B base, 817 B under the cap.
+
+### Behaviour differences from the baseline (for the owner to accept or not)
+
+The rule throughout was: byte-identical results wherever the baseline
+returns, same error class and message wherever it throws. These inputs do not
+meet it on `climb/final`. All five classes predate generation 3 (which moved
+a few cases inside items 3 and 5, as noted) and the verifier exercises none
+of them. Item 1 is counted by match-fuzz; items 3 and 4 need
+input outside the declared TypeScript types, which no fuzzer generates.
+
+1. **The baseline crashes, the candidate returns** (accepted by the original
+   architect pending the owner, who had not answered): `location: NaN` and
+   some fractional `location` values (`RangeError: Invalid array length`;
+   counted by match-fuzz as `baseThrowsOnly`, see the gate lines), and a
+   `null`/`undefined` record in a hand-built index (`TypeError`; the candidate
+   skips it).
+2. **`Fuse.parseQuery` internals in the development builds:** `BitapSearch`
+   chunks carry an alphabet keyed by character code and an extra 256-entry
+   `table` (1,054 of the first harden reviewer's 3,275 parsed trees differ,
+   only there); leaf `searcher.options` hold raw values (gen2-size 1). Search
+   results are unaffected.
+3. **A non-string `text` or `pattern` handed to a searcher**, through
+   `Fuse.match` or a hand-built index whose stored value is not a string (from
+   the char-code kernel `07424cd` and generation 2's `canMatch`). The baseline
+   treats an array as text by accident. The lead's 16,000-case grid on this
+   tree (20 values × 20 values × 40 option sets through `Fuse.match`; same
+   counts on `climb/gen2-best`): 135 cases where only the candidate throws
+   (`text.charCodeAt is not a function`), 189 where only the baseline throws
+   (`text.indexOf is not a function`), and 1,547 where both throw with
+   different messages (`pattern.charAt`/`this.pattern.substr` against
+   `pattern.substr`, 960; `pattern.toLowerCase` against `value.toLowerCase`,
+   560; `text.indexOf` against `text.charCodeAt`, 27). The scan reviewer adds
+   that array texts of 33 to 256 elements can now return a different result
+   instead of throwing (65 of 1,026 cases). The nonstring worker's larger
+   differential on `climb/gen2-best` read 2,740 candidate-only throws through
+   `Fuse.match` and 1,500 through a parsed index. Exact fix: +500 B,
+   unreviewed (above).
+4. **A BigInt `threshold` or `distance`** (from generation 2's window
+   arithmetic in `canMatch`): the candidate throws `Cannot mix BigInt and
+   other types` where the baseline returns. The lead's 1,722-case odd-option
+   grid on this tree (same counts on `climb/gen2-best`): 60 (`threshold`) and
+   18 (`distance`) candidate-only throws, 12 changed messages, 63 cases where
+   only the baseline throws. Strings, `null`, booleans, arrays and objects as
+   option values all match or fall under item 1. No fix has been measured.
+
+5. **A numeric option that is an object with a stateful `valueOf`** (for
+   example a `threshold` whose value changes each time it is read): the
+   candidate reads it a different number of times than the baseline, so the
+   result can differ. In the scan re-reviewer's 9,348-case grid, 58 cases
+   return a different result from the baseline on this tree, against 90 on
+   `climb/gen2-best` (see gen3-scan follow-up 5).
+
+Items 3 and 4 include cases where only the candidate throws, which the rule
+does not allow. The lead chose to disclose them and not to hold the pull
+request for a fix; that choice is the owner's to confirm or reverse.
+
+### Who verified what
+
+- Generations 1 and 2: per-branch reviews and the crossover gates recorded in
+  the sections above.
+- Generation 3 branches: three first reviews and two targeted re-reviews, each
+  by an independent reviewer in its own sandbox (threads in the table above).
+  `climb/gen3-nonstring` was measured by its worker and not reviewed.
+- `climb/final` as a whole: the gate and the five verifier runs above, by the
+  generation 3 lead; then an independent final review of
+  `origin/main...origin/climb/final` (recorded in the pull request, since it
+  ran after this file was committed).
+- The original architect did not verify this tree.
