@@ -13,9 +13,16 @@
  *   npm run build && node bench/parity-fuzz.mjs
  *   node bench/parity-fuzz.mjs --iters 400 --seed 7
  *   node bench/parity-fuzz.mjs --candidate ./some/other/fuse.mjs
+ *   node bench/parity-fuzz.mjs --no-sparse-records
  *
  * Exit code 0 = all cases identical, 1 = first mismatch (printed with a
  * minimal repro: seed, options, query).
+ *
+ * Revision 2 (after generation 1): adds sparse `docs`, sparse arrays inside
+ * documents, sparse `records` through Fuse.parseIndex, and out-of-range
+ * `distance` / `threshold` values. Two generation 1 branches passed revision 1
+ * and were then caught by reviewers on sparse arrays. Seeds do not reproduce
+ * the same cases across revisions.
  */
 
 import path from 'node:path'
@@ -29,6 +36,10 @@ const flag = (name, dflt) => {
 }
 const ITERS = Number(flag('--iters', 150))
 const SEED = Number(flag('--seed', 1))
+// --no-sparse-records keeps every other generator (and the same cases per
+// seed) but leaves parsed index `records` dense. For branches forked from a
+// tree with a known sparse-records divergence that another branch is fixing.
+const SPARSE_RECORDS = !args.includes('--no-sparse-records')
 const candidatePath = flag('--candidate', '../dist/fuse.mjs')
 const candidateUrl = candidatePath.startsWith('.')
   ? new URL(candidatePath, import.meta.url).href
@@ -128,7 +139,17 @@ function makeDocs(g, kind, count) {
       year: g.chance(0.5) ? 1990 + g.int(40) : undefined,
       flag: g.chance(0.3) ? g.chance(0.5) : undefined
     }
+    // Sparse array inside a document: forEach/filter/map skip holes, index
+    // loops and for...of do not.
+    if (Array.isArray(doc.tags) && doc.tags.length > 1 && g.chance(0.04)) {
+      delete doc.tags[g.int(doc.tags.length)]
+    }
     docs.push(doc)
+  }
+  // Sparse docs array (holes, not undefined entries).
+  if (count > 3 && g.chance(0.06)) {
+    const holes = 1 + g.int(3)
+    for (let h = 0; h < holes; h++) delete docs[1 + g.int(count - 1)]
   }
   return docs
 }
@@ -157,8 +178,8 @@ function makeOptions(g, kind) {
   if (g.chance(0.25)) o.ignoreLocation = true
   if (g.chance(0.2)) o.findAllMatches = true
   if (g.chance(0.25)) o.minMatchCharLength = 1 + g.int(4)
-  if (g.chance(0.4)) o.threshold = g.pick([0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1])
-  if (g.chance(0.3)) o.distance = g.pick([0, 1, 10, 50, 100, 500, 1000])
+  if (g.chance(0.4)) o.threshold = g.pick([0, 0.1, 0.2, 0.3, 0.45, 0.6, 0.8, 1, 1.5, -0.1])
+  if (g.chance(0.3)) o.distance = g.pick([0, 1, 10, 50, 100, 500, 1000, 1e12, -5])
   if (g.chance(0.3)) o.location = g.pick([0, 1, 5, 20, 80, 300])
   if (g.chance(0.15)) o.ignoreFieldNorm = true
   if (g.chance(0.15)) o.fieldNormWeight = g.pick([0, 0.5, 2])
@@ -288,6 +309,10 @@ function run(Fuse, plan) {
     } else if (step.type === 'parseIndex') {
       record('parseIndex', () => {
         const json = JSON.parse(JSON.stringify(fuse.getIndex().toJSON()))
+        // Hand-built indexes may have holes in `records`.
+        if (SPARSE_RECORDS) {
+          for (const k of step.holes) if (k < json.records.length) delete json.records[k]
+        }
         const parsed = Fuse.parseIndex(json)
         const f2 = new Fuse(fuse._docs.slice(), plan.opts, parsed)
         return f2.search(step.query, step.searchOpts)
@@ -327,7 +352,12 @@ for (let iter = 0; iter < ITERS; iter++) {
     } else if (r < 17) {
       steps.push({ type: 'index' })
     } else if (r < 18) {
-      steps.push({ type: 'parseIndex', query: makeQuery(g, opts, kind), searchOpts })
+      steps.push({
+        type: 'parseIndex',
+        query: makeQuery(g, opts, kind),
+        searchOpts,
+        holes: g.chance(0.3) ? [1 + g.int(4), 3 + g.int(6)] : []
+      })
     } else if (!opts.useTokenSearch) {
       const q = makeQuery(g, opts, 'strings')
       if (typeof q === 'string') steps.push({ type: 'match', query: q, text: g.text() })
@@ -358,5 +388,5 @@ for (let iter = 0; iter < ITERS; iter++) {
 }
 
 console.log(
-  `PARITY_FUZZ_OK cases=${cases} comparisons=${comparisons} seed=${SEED} candidate=${candidatePath}`
+  `PARITY_FUZZ_OK rev=2 cases=${cases} comparisons=${comparisons} seed=${SEED} candidate=${candidatePath}${SPARSE_RECORDS ? '' : ' (sparse records off)'}`
 )
