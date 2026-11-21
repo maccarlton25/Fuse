@@ -20,7 +20,10 @@ export default function canMatch(
     distance: number
     threshold: number
     ignoreLocation: boolean
-  }
+  },
+  // The caller only tests the result for truth: stop at the first passing
+  // start with ignoreLocation too, instead of finding the minimum count.
+  any?: boolean
 ): number {
   const n = text.length
   const m = pattern.length
@@ -40,13 +43,35 @@ export default function canMatch(
   let mv = 0
   let score = m
   let best = m
+  // A start p with D(p) = d can only pass if d / m <= threshold (the location
+  // term adds a nonnegative amount when distance > 0), so compare the running
+  // count with kmax, the largest such d, before calling calcScore. The loop
+  // finds it with the same float test d / m <= threshold, comparing only (no
+  // arithmetic on threshold, which may be any value such as a BigInt, as in
+  // the kernel); it stops at m. A NaN or negative threshold leaves kmax = -1,
+  // which no count passes, as in calcScore. With distance <= 0 or NaN a far
+  // position may pass with any count: kmax = m, the largest possible count,
+  // so every position takes calcScore as before.
+  let kmax = -1
+  while (kmax < m && (kmax + 1) / m <= threshold) kmax++
+  if (ignoreLocation) {
+    if (kmax >= m) kmax = m - 1
+  } else if (!(distance > 0)) kmax = m
   // An exact copy inside [stop, j) has D = 0: accept without walking the
   // window down to it (O(threshold * distance) when it is the only hit, where
-  // the kernel's indexOf pre-pass stops at once). The slice keeps the search
-  // inside the window (V8 slices without copying). With ignoreLocation, ~0 is
-  // the exact direct answer (k = 0) for any threshold >= 0. A negative
-  // threshold takes the walk: with a negative distance it can still match.
-  if (j - stop > 256 && threshold >= 0 && text.slice(stop, j).includes(pattern))
+  // the kernel's indexOf pre-pass stops at once). Past 32 positions the native
+  // search is cheaper than the walk. The slice keeps the search inside the
+  // window (V8 slices without copying); it is only needed when the window ends
+  // before the text does. With ignoreLocation, ~0 is the exact direct answer
+  // (k = 0) for any threshold >= 0. A negative threshold takes the walk: with
+  // a negative distance it can still match.
+  if (
+    j - stop > 32 &&
+    threshold >= 0 &&
+    (j < n
+      ? text.slice(stop, j).includes(pattern)
+      : text.includes(pattern, stop))
+  )
     return ~0
   while (j-- > stop) {
     const c = text.charCodeAt(j)
@@ -61,17 +86,22 @@ export default function canMatch(
     mh <<= 1
     pv = mh | ~(xv | ph)
     mv = ph & xv
-    if (ignoreLocation) {
-      if (score < best) best = score
-    } else if (
-      calcScore(score, j, m, expected, distance, ignoreLocation) <= threshold
-    ) {
-      return 1
+    if (score <= kmax) {
+      if (!ignoreLocation) {
+        if (calcScore(score, j, m, expected, distance, false) <= threshold)
+          return 1
+      } else if (score < best) {
+        best = score
+        // Only the minimum matters, and only when the caller wants it.
+        if (any || !score) break
+      }
     }
   }
   // With ignoreLocation every start scores errors / m, so the kernel matches
   // iff the minimum edit count `best` over all starts is below m and scores
   // <= threshold; it then reports exactly best / m. Return ~best (always
-  // truthy) so the caller can answer without the kernel.
+  // truthy) so the caller can answer without the kernel. Counts above kmax
+  // never reach `best`, so a returned best is the true minimum when `any` is
+  // not set (and some passing count when it is).
   return best < m && best / m <= threshold ? ~best : 0
 }

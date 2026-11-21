@@ -107,7 +107,7 @@ export default class BitapSearch {
     let hasMatches = false
     let totalScore = 0
     for (const chunk of this.chunks) {
-      const r = canMatch(text, chunk, this.options)
+      const r = canMatch(text, chunk, this.options, !direct)
       if (r) {
         hasMatches = true
         if (!direct) break
