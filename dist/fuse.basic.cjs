@@ -125,38 +125,32 @@ function createKeyId(key) {
 //#endregion
 //#region src/helpers/get.ts
 const isLeaf$1 = (value) => isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint";
-function deepGet(list, obj, path, index, arrayIndex) {
-	if (!isDefined(obj)) return;
-	if (!path[index]) list.push({
-		v: obj,
-		i: arrayIndex
-	});
-	else {
+function walk(obj, path, index, list, arrayIndex) {
+	for (;; index++) {
+		if (!isDefined(obj)) return list;
+		if (!path[index]) break;
 		const value = obj[path[index]];
-		if (!isDefined(value)) return;
-		if (index === path.length - 1 && isLeaf$1(value)) list.push({
-			v: toString(value),
-			i: arrayIndex
-		});
-		else if (isArray(value)) for (let i = 0, len = value.length; i < len; i += 1) deepGet(list, value[i], path, index + 1, i);
-		else deepGet(list, value, path, index + 1, arrayIndex);
-	}
-}
-function get(obj, path) {
-	if (isString(path)) path = path.split(".");
-	for (let index = 0;; index++) {
-		if (!isDefined(obj)) return;
-		if (!path[index]) return obj;
-		const value = obj[path[index]];
-		if (!isDefined(value)) return;
-		if (index === path.length - 1 && isLeaf$1(value)) return toString(value);
+		if (!isDefined(value)) return list;
+		if (index === path.length - 1 && isLeaf$1(value)) {
+			obj = toString(value);
+			break;
+		}
 		if (isArray(value)) {
-			const list = [];
-			deepGet(list, obj, path, index, 0);
+			list = list || [];
+			for (let i = 0, len = value.length; i < len; i += 1) walk(value[i], path, index + 1, list, i);
 			return list;
 		}
 		obj = value;
 	}
+	if (!list) return obj;
+	list.push({
+		v: obj,
+		i: arrayIndex
+	});
+	return list;
+}
+function get(obj, path) {
+	return walk(obj, isString(path) ? path.split(".") : path, 0);
 }
 
 //#endregion

@@ -244,3 +244,57 @@ describe('field norm over rare separators matches the baseline', () => {
     }
   })
 })
+
+describe('get() reads each path segment once, like the baseline', () => {
+  const counting = () => {
+    const reads: string[] = []
+    const tags = ['a', { x: 'b' }, ['c']]
+    const doc = {
+      get tags() {
+        reads.push('tags')
+        return tags
+      },
+      get o() {
+        reads.push('o')
+        return {
+          get arr() {
+            reads.push('o.arr')
+            return [{ x: 'y' }, { x: 'z' }]
+          }
+        }
+      }
+    }
+    return { doc, reads }
+  }
+  test.each([['tags'], ['o.arr.x'], [['o', 'arr']], ['tags.x'], ['o.arr']])(
+    'path %j',
+    (path) => {
+      const a = counting()
+      const b = counting()
+      const ra = Fuse.config.getFn(a.doc, path)
+      const rb = BaselineFuse.config.getFn(b.doc, path)
+      expect(JSON.stringify(ra)).toBe(JSON.stringify(rb))
+      expect(a.reads).toEqual(b.reads)
+    }
+  )
+  test('Proxy traps fire as often as in the baseline', () => {
+    const trap = (log: string[]) =>
+      new Proxy(
+        { list: ['p', 'q'], deep: { list: [{ v: 1 }] } },
+        {
+          get(t: any, k) {
+            log.push(String(k))
+            return t[k]
+          }
+        }
+      )
+    for (const path of ['list', 'deep.list.v', 'deep', 'missing']) {
+      const la: string[] = []
+      const lb: string[] = []
+      expect(JSON.stringify(Fuse.config.getFn(trap(la), path))).toBe(
+        JSON.stringify(BaselineFuse.config.getFn(trap(lb), path))
+      )
+      expect(la).toEqual(lb)
+    }
+  })
+})
