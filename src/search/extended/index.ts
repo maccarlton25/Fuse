@@ -1,52 +1,34 @@
 import parseQuery from './parseQuery'
 import { MULTI_MATCH_TYPES, isInverse } from './matchers'
-import Config from '../../core/config'
 import { stripDiacritics } from '../../helpers/diacritics'
 import { mergeIndices } from '../../helpers/mergeIndices'
 import type { SearchResult, RangeTuple } from '../../types'
 import type { Matcher } from './matchers'
 
+// The only options ExtendedSearch itself reads. Their Config defaults are all
+// `false`, so testing the raw option for truthiness is the same as testing
+// `option ?? Config.option`; the fuzzy matcher factory applies the remaining
+// defaults (location, threshold, ...) itself. Snapshotted at construction so a
+// later change to the caller's options object cannot reach a built searcher.
 interface ExtendedSearchOptions {
   isCaseSensitive: boolean
   ignoreDiacritics: boolean
   includeMatches: boolean
-  minMatchCharLength: number
-  findAllMatches: boolean
-  ignoreLocation: boolean
-  location: number
-  threshold: number
-  distance: number
 }
 
-// Resolve the subset of options ExtendedSearch cares about, applying Config
-// defaults. Shared by the string-pattern constructor and the `fromMatchers`
-// factory so both evaluate under identical option semantics.
-function resolveOptions(options: any = {}): ExtendedSearchOptions {
-  return {
-    isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
-    ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
-    includeMatches: options.includeMatches ?? Config.includeMatches,
-    minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
-    findAllMatches: options.findAllMatches ?? Config.findAllMatches,
-    ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation,
-    location: options.location ?? Config.location,
-    threshold: options.threshold ?? Config.threshold,
-    distance: options.distance ?? Config.distance
-  }
-}
+const pickOptions = (options: any): ExtendedSearchOptions => ({
+  isCaseSensitive: options.isCaseSensitive,
+  ignoreDiacritics: options.ignoreDiacritics,
+  includeMatches: options.includeMatches
+})
 
 // Normalize a pattern/operator value exactly as the string-pattern constructor
 // normalizes a whole query string (case-fold then strip diacritics). The object
 // compiler applies this per operator value so object and string forms feed
 // identically-normalized patterns to the matchers.
 export function normalizeValue(value: string, options: any): string {
-  value =
-    (options.isCaseSensitive ?? Config.isCaseSensitive)
-      ? value
-      : value.toLowerCase()
-  return (options.ignoreDiacritics ?? Config.ignoreDiacritics)
-    ? stripDiacritics(value)
-    : value
+  value = options.isCaseSensitive ? value : value.toLowerCase()
+  return options.ignoreDiacritics ? stripDiacritics(value) : value
 }
 
 export default class ExtendedSearch {
@@ -55,12 +37,9 @@ export default class ExtendedSearch {
   pattern: string
 
   constructor(pattern: string, options: any = {}) {
-    this.options = resolveOptions(options)
-
-    pattern = this.options.isCaseSensitive ? pattern : pattern.toLowerCase()
-    pattern = this.options.ignoreDiacritics ? stripDiacritics(pattern) : pattern
-    this.pattern = pattern
-    this.query = parseQuery(this.pattern, this.options)
+    this.options = pickOptions(options)
+    this.pattern = normalizeValue(pattern, options)
+    this.query = parseQuery(this.pattern, options)
   }
 
   // Build an ExtendedSearch that evaluates a pre-compiled `Matcher[][]` (an
@@ -71,7 +50,7 @@ export default class ExtendedSearch {
   // normalized by the compiler; `searchIn` still normalizes the candidate text.
   static fromMatchers(query: Matcher[][], options: any = {}): ExtendedSearch {
     const search: ExtendedSearch = Object.create(ExtendedSearch.prototype)
-    search.options = resolveOptions(options)
+    search.options = pickOptions(options)
     search.pattern = '' // unused by searchIn; object leaves have no pattern string
     search.query = query
     return search
@@ -94,66 +73,52 @@ export default class ExtendedSearch {
       }
     }
 
-    const { includeMatches, isCaseSensitive, ignoreDiacritics } = this.options
+    const options = this.options
 
-    text = isCaseSensitive ? text : text.toLowerCase()
-    text = ignoreDiacritics ? stripDiacritics(text) : text
+    if (!options.isCaseSensitive) text = text.toLowerCase()
+    if (options.ignoreDiacritics) text = stripDiacritics(text)
 
-    let numMatches = 0
-    const allIndices: RangeTuple[] = []
-    let totalScore = 0
-    let hasInverse = false
-
-    // ORs
+    // ORs. A group succeeds only if every matcher matches, so its score sum,
+    // `hasInverse` (any inverse matcher in the group) and indices are only
+    // assembled for the group that succeeds. Matchers are pure, so skipping
+    // the indices of failed groups is unobservable.
     for (let i = 0, qLen = query.length; i < qLen; i += 1) {
       const searchers = query[i]
-
-      // Reset indices
-      allIndices.length = 0
-      numMatches = 0
-      hasInverse = false
+      const pLen = searchers.length
+      // Matched results are only kept when indices are needed.
+      const results: SearchResult[] | false = options.includeMatches && []
+      let totalScore = 0
+      let j = 0
 
       // ANDs
-      for (let j = 0, pLen = searchers.length; j < pLen; j += 1) {
-        const matcher = searchers[j]
-        const { isMatch, indices, score } = matcher.search(text)
-
-        if (isMatch) {
-          numMatches += 1
-          totalScore += score
-
-          if (isInverse(matcher.type)) {
-            hasInverse = true
-          }
-
-          if (includeMatches) {
-            if (MULTI_MATCH_TYPES.has(matcher.type)) {
-              allIndices.push(...(indices as unknown as RangeTuple[]))
-            } else {
-              allIndices.push(indices as unknown as RangeTuple)
-            }
-          }
-        } else {
-          totalScore = 0
-          numMatches = 0
-          allIndices.length = 0
-          hasInverse = false
-          break
-        }
+      for (; j < pLen; j += 1) {
+        const res = searchers[j].search(text)
+        if (!res.isMatch) break
+        totalScore += res.score
+        if (results) results.push(res)
       }
 
       // OR condition, so if TRUE, return
-      if (numMatches) {
+      if (pLen && j === pLen) {
         const result: SearchResult = {
           isMatch: true,
-          score: totalScore / numMatches
+          score: totalScore / pLen
         }
 
-        if (hasInverse) {
+        if (searchers.some((m) => isInverse(m.type))) {
           result.hasInverse = true
         }
 
-        if (includeMatches) {
+        if (results) {
+          const allIndices: RangeTuple[] = []
+          for (j = 0; j < pLen; j += 1) {
+            const indices = results[j].indices as unknown as RangeTuple
+            if (MULTI_MATCH_TYPES.has(searchers[j].type)) {
+              allIndices.push(...(indices as unknown as RangeTuple[]))
+            } else {
+              allIndices.push(indices)
+            }
+          }
           result.indices = mergeIndices(allIndices)
         }
 

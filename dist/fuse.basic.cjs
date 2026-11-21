@@ -54,7 +54,6 @@ const INCORRECT_INDEX_TYPE = "Incorrect 'index' type";
 const INVALID_DOC_INDEX = "Invalid doc index: must be a non-negative integer within the bounds of the docs array";
 const LOGICAL_SEARCH_INVALID_QUERY_FOR_KEY = (key) => `Invalid value for key ${key}`;
 const OBJECT_QUERY_UNAVAILABLE = "Object query syntax is not available in this build";
-const PATTERN_LENGTH_TOO_LARGE = (max) => `Pattern length exceeds max of ${max}.`;
 const MISSING_KEY_PROPERTY = (name) => `Missing ${name} property in key`;
 const INVALID_KEY_WEIGHT_VALUE = (key) => `Property 'weight' in key '${key}' must be a positive integer`;
 const FUSE_MATCH_TOKEN_SEARCH_UNSUPPORTED = "Fuse.match does not support useTokenSearch: token search requires corpus-level statistics (df, fieldCount) that a one-off string comparison does not have. Use new Fuse(...).search(...) instead.";
@@ -154,25 +153,19 @@ function get(obj, path) {
 
 //#endregion
 //#region src/core/config.ts
-const MatchOptions = {
-	includeMatches: false,
-	findAllMatches: false,
-	minMatchCharLength: 1
-};
-const BasicOptions = {
+const Config = Object.freeze({
 	isCaseSensitive: false,
 	ignoreDiacritics: false,
 	includeScore: false,
 	keys: [],
 	shouldSort: true,
-	sortFn: (a, b) => a.score === b.score ? a.idx < b.idx ? -1 : 1 : a.score < b.score ? -1 : 1
-};
-const FuzzyOptions = {
+	sortFn: (a, b) => a.score === b.score ? a.idx < b.idx ? -1 : 1 : a.score < b.score ? -1 : 1,
+	includeMatches: false,
+	findAllMatches: false,
+	minMatchCharLength: 1,
 	location: 0,
 	threshold: .6,
-	distance: 100
-};
-const AdvancedOptions = {
+	distance: 100,
 	useExtendedSearch: false,
 	useTokenSearch: false,
 	tokenize: void 0,
@@ -181,12 +174,6 @@ const AdvancedOptions = {
 	ignoreLocation: false,
 	ignoreFieldNorm: false,
 	fieldNormWeight: 1
-};
-const Config = Object.freeze({
-	...BasicOptions,
-	...MatchOptions,
-	...FuzzyOptions,
-	...AdvancedOptions
 });
 
 //#endregion
@@ -383,58 +370,37 @@ function parseIndex(data, { getFn = Config.getFn, fieldNormWeight = Config.field
 }
 
 //#endregion
-//#region src/search/bitap/convertMaskToIndices.ts
-function convertMaskToIndices(matchmask = [], minMatchCharLength = Config.minMatchCharLength) {
-	const indices = [];
-	let start = -1;
-	let end = -1;
-	let i = 0;
-	for (let len = matchmask.length; i < len; i += 1) {
-		const match = matchmask[i];
-		if (match && start === -1) start = i;
-		else if (!match && start !== -1) {
-			end = i - 1;
-			if (end - start + 1 >= minMatchCharLength) indices.push([start, end]);
-			start = -1;
-		}
-	}
-	if (matchmask[i - 1] && i - start >= minMatchCharLength) indices.push([start, i - 1]);
-	return indices;
-}
-
-//#endregion
 //#region src/search/bitap/search.ts
-function search(text, pattern, patternAlphabet, { location = Config.location, distance = Config.distance, threshold = Config.threshold, findAllMatches = Config.findAllMatches, minMatchCharLength = Config.minMatchCharLength, includeMatches = Config.includeMatches, ignoreLocation = Config.ignoreLocation } = {}) {
-	if (pattern.length > 32) throw new Error(PATTERN_LENGTH_TOO_LARGE(32));
+const KEEP = 3e4;
+let bufA = /* @__PURE__ */ new Int32Array(0);
+let bufB = /* @__PURE__ */ new Int32Array(0);
+let charBuf = /* @__PURE__ */ new Int32Array(0);
+const calcScore = (errors, loc, patternLen, expectedLocation, distance, ignoreLocation) => {
+	const accuracy = errors / patternLen;
+	if (ignoreLocation) return accuracy;
+	const proximity = Math.abs(expectedLocation - loc);
+	if (!distance) return proximity ? 1 : accuracy;
+	return accuracy + proximity / distance;
+};
+function search(text, { pattern, alphabet: patternAlphabet, table }, location, { distance, threshold, findAllMatches, minMatchCharLength, includeMatches, ignoreLocation }) {
 	const patternLen = pattern.length;
 	const textLen = text.length;
 	const expectedLocation = Math.max(0, Math.min(location, textLen));
 	let currentThreshold = threshold;
 	let bestLocation = expectedLocation;
-	const calcScore = (errors, currentLocation) => {
-		const accuracy = errors / patternLen;
-		if (ignoreLocation) return accuracy;
-		const proximity = Math.abs(expectedLocation - currentLocation);
-		if (!distance) return proximity ? 1 : accuracy;
-		return accuracy + proximity / distance;
-	};
 	const computeMatches = minMatchCharLength > 1 || includeMatches;
-	const matchMask = computeMatches ? Array(textLen) : [];
+	const matchMask = new Uint8Array(computeMatches ? textLen : 0);
 	let index;
 	while ((index = text.indexOf(pattern, bestLocation)) > -1) {
-		const score = calcScore(0, index);
-		currentThreshold = Math.min(score, currentThreshold);
+		currentThreshold = Math.min(calcScore(0, index, patternLen, expectedLocation, distance, ignoreLocation), currentThreshold);
 		bestLocation = index + patternLen;
-		if (computeMatches) {
-			let i = 0;
-			while (i < patternLen) {
-				matchMask[index + i] = 1;
-				i += 1;
-			}
-		}
+		if (computeMatches) matchMask.fill(1, index, bestLocation);
 	}
 	bestLocation = -1;
-	let lastBitArr = [];
+	let bitArr = bufA;
+	let lastBitArr = bufB;
+	let cm = charBuf;
+	let low = 1;
 	let finalScore = 1;
 	let bestErrors = 0;
 	let binMax = patternLen + textLen;
@@ -443,44 +409,69 @@ function search(text, pattern, patternAlphabet, { location = Config.location, di
 		let binMin = 0;
 		let binMid = binMax;
 		while (binMin < binMid) {
-			if (calcScore(i, expectedLocation + binMid) <= currentThreshold) binMin = binMid;
+			if (calcScore(i, expectedLocation + binMid, patternLen, expectedLocation, distance, ignoreLocation) <= currentThreshold) binMin = binMid;
 			else binMax = binMid;
 			binMid = Math.floor((binMax - binMin) / 2 + binMin);
 		}
 		binMax = binMid;
 		let start = Math.max(1, expectedLocation - binMid + 1);
 		const finish = findAllMatches ? textLen : Math.min(expectedLocation + binMid, textLen) + patternLen;
-		const bitArr = Array(finish + 2);
+		if (!i) {
+			low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1)) | 0;
+			if (bitArr.length < finish + 2) {
+				bitArr = new Int32Array(finish * 2 + 4);
+				lastBitArr = new Int32Array(finish * 2 + 4);
+				cm = new Int32Array(finish * 2 + 4);
+				if (finish < KEEP) {
+					bufA = bitArr;
+					bufB = lastBitArr;
+					charBuf = cm;
+				}
+			}
+			for (let k = low; k <= finish; k += 1) cm[k] = k > textLen ? 0 : table[text.charCodeAt(k - 1)] ?? patternAlphabet[text.charCodeAt(k - 1)] | 0;
+		}
 		bitArr[finish + 1] = (1 << i) - 1;
-		for (let j = finish; j >= start; j -= 1) {
-			const currentLocation = j - 1;
-			const charMatch = patternAlphabet[text[currentLocation]];
-			bitArr[j] = (bitArr[j + 1] << 1 | 1) & charMatch;
-			if (i) bitArr[j] |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
-			if (bitArr[j] & mask) {
-				finalScore = calcScore(i, currentLocation);
+		let j = finish;
+		for (; j >= start; j -= 1) {
+			let bits = (bitArr[j + 1] << 1 | 1) & cm[j];
+			if (i) bits |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
+			bitArr[j] = bits;
+			if (bits & mask) {
+				finalScore = calcScore(i, j - 1, patternLen, expectedLocation, distance, ignoreLocation);
 				if (finalScore <= currentThreshold) {
 					currentThreshold = finalScore;
-					bestLocation = currentLocation;
+					bestLocation = j - 1;
 					bestErrors = i;
-					if (bestLocation <= expectedLocation) break;
+					if (bestLocation <= expectedLocation) {
+						j -= 1;
+						break;
+					}
 					start = Math.max(1, 2 * expectedLocation - bestLocation);
 				}
 			}
 		}
-		if (calcScore(i + 1, expectedLocation) > currentThreshold) break;
+		if ((i + 1) / patternLen > currentThreshold) break;
+		bitArr.fill(0, low, j + 1);
+		const tmp = lastBitArr;
 		lastBitArr = bitArr;
+		bitArr = tmp;
 	}
 	if (computeMatches && bestLocation >= 0) {
 		const matchEnd = Math.min(textLen - 1, bestLocation + patternLen - 1 + bestErrors);
-		for (let k = bestLocation; k <= matchEnd; k += 1) if (patternAlphabet[text[k]]) matchMask[k] = 1;
+		for (let k = bestLocation; k <= matchEnd; k += 1) if (patternAlphabet[text.charCodeAt(k)]) matchMask[k] = 1;
 	}
 	const result = {
 		isMatch: bestLocation >= 0,
 		score: Math.max(.001, finalScore)
 	};
 	if (computeMatches) {
-		const indices = convertMaskToIndices(matchMask, minMatchCharLength);
+		const indices = [];
+		for (let k = 0, start = -1; k <= textLen; k += 1) if (matchMask[k]) {
+			if (start < 0) start = k;
+		} else if (start >= 0) {
+			if (k - start >= minMatchCharLength) indices.push([start, k - 1]);
+			start = -1;
+		}
 		if (!indices.length) result.isMatch = false;
 		else if (includeMatches) result.indices = indices;
 	}
@@ -488,12 +479,57 @@ function search(text, pattern, patternAlphabet, { location = Config.location, di
 }
 
 //#endregion
+//#region src/search/bitap/canMatch.ts
+function canMatch(text, { pattern, alphabet, table, startIndex }, { location, distance, threshold, ignoreLocation }, any) {
+	const n = text.length;
+	const m = pattern.length;
+	const expected = Math.max(0, Math.min(location + startIndex, n));
+	const w = ignoreLocation || distance < 0 ? n : threshold * distance + 1 || n;
+	let j = Math.min(n, expected + w + 2 * m) | 0;
+	const stop = expected > w ? expected - w : 0;
+	const last = 1 << m - 1;
+	let pv = -1;
+	let mv = 0;
+	let score = m;
+	let best = m;
+	let kmax = -1;
+	while (kmax < m && (kmax + 1) / m <= threshold) kmax++;
+	if (ignoreLocation) {
+		if (kmax >= m) kmax = m - 1;
+	} else if (!(distance > 0)) kmax = m;
+	if (j - stop > 32 && threshold >= 0 && (j < n ? text.slice(stop, j).includes(pattern) : text.includes(pattern, stop))) return -1;
+	while (j-- > stop) {
+		const c = text.charCodeAt(j);
+		const eq = table[c] ?? alphabet[c] | 0;
+		const xv = eq | mv;
+		const xh = (eq & pv) + pv ^ pv | eq;
+		let ph = mv | ~(xh | pv);
+		let mh = pv & xh;
+		if (ph & last) score++;
+		else if (mh & last) score--;
+		ph <<= 1;
+		mh <<= 1;
+		pv = mh | ~(xv | ph);
+		mv = ph & xv;
+		if (score <= kmax) {
+			if (!ignoreLocation) {
+				if (calcScore(score, j, m, expected, distance, false) <= threshold) return 1;
+			} else if (score < best) {
+				best = score;
+				if (any || !score) break;
+			}
+		}
+	}
+	return best < m && best / m <= threshold ? ~best : 0;
+}
+
+//#endregion
 //#region src/search/bitap/createPatternAlphabet.ts
 function createPatternAlphabet(pattern) {
 	const mask = {};
 	for (let i = 0, len = pattern.length; i < len; i += 1) {
-		const char = pattern.charAt(i);
-		mask[char] = (mask[char] || 0) | 1 << len - i - 1;
+		const code = pattern.charCodeAt(i);
+		mask[code] |= 1 << len - i - 1;
 	}
 	return mask;
 }
@@ -530,7 +566,11 @@ const NON_DECOMPOSABLE_MAP = {
 	"ß": "ss"
 };
 const NON_DECOMPOSABLE_RE = new RegExp("[" + Object.keys(NON_DECOMPOSABLE_MAP).join("") + "]", "g");
-const stripDiacritics = typeof String.prototype.normalize === "function" ? (str) => str.normalize("NFD").replace(/[\u0300-\u036F\u0483-\u0489\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u0711\u0730-\u074A\u07A6-\u07B0\u07EB-\u07F3\u07FD\u0816-\u0819\u081B-\u0823\u0825-\u0827\u0829-\u082D\u0859-\u085B\u08D3-\u08E1\u08E3-\u0903\u093A-\u093C\u093E-\u094F\u0951-\u0957\u0962\u0963\u0981-\u0983\u09BC\u09BE-\u09C4\u09C7\u09C8\u09CB-\u09CD\u09D7\u09E2\u09E3\u09FE\u0A01-\u0A03\u0A3C\u0A3E-\u0A42\u0A47\u0A48\u0A4B-\u0A4D\u0A51\u0A70\u0A71\u0A75\u0A81-\u0A83\u0ABC\u0ABE-\u0AC5\u0AC7-\u0AC9\u0ACB-\u0ACD\u0AE2\u0AE3\u0AFA-\u0AFF\u0B01-\u0B03\u0B3C\u0B3E-\u0B44\u0B47\u0B48\u0B4B-\u0B4D\u0B56\u0B57\u0B62\u0B63\u0B82\u0BBE-\u0BC2\u0BC6-\u0BC8\u0BCA-\u0BCD\u0BD7\u0C00-\u0C04\u0C3E-\u0C44\u0C46-\u0C48\u0C4A-\u0C4D\u0C55\u0C56\u0C62\u0C63\u0C81-\u0C83\u0CBC\u0CBE-\u0CC4\u0CC6-\u0CC8\u0CCA-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D44\u0D46-\u0D48\u0D4A-\u0D4D\u0D57\u0D62\u0D63\u0D82\u0D83\u0DCA\u0DCF-\u0DD4\u0DD6\u0DD8-\u0DDF\u0DF2\u0DF3\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0EB1\u0EB4-\u0EB9\u0EBB\u0EBC\u0EC8-\u0ECD\u0F18\u0F19\u0F35\u0F37\u0F39\u0F3E\u0F3F\u0F71-\u0F84\u0F86\u0F87\u0F8D-\u0F97\u0F99-\u0FBC\u0FC6\u102B-\u103E\u1056-\u1059\u105E-\u1060\u1062-\u1064\u1067-\u106D\u1071-\u1074\u1082-\u108D\u108F\u109A-\u109D\u135D-\u135F\u1712-\u1714\u1732-\u1734\u1752\u1753\u1772\u1773\u17B4-\u17D3\u17DD\u180B-\u180D\u1885\u1886\u18A9\u1920-\u192B\u1930-\u193B\u1A17-\u1A1B\u1A55-\u1A5E\u1A60-\u1A7C\u1A7F\u1AB0-\u1ABE\u1B00-\u1B04\u1B34-\u1B44\u1B6B-\u1B73\u1B80-\u1B82\u1BA1-\u1BAD\u1BE6-\u1BF3\u1C24-\u1C37\u1CD0-\u1CD2\u1CD4-\u1CE8\u1CED\u1CF2-\u1CF4\u1CF7-\u1CF9\u1DC0-\u1DF9\u1DFB-\u1DFF\u20D0-\u20F0\u2CEF-\u2CF1\u2D7F\u2DE0-\u2DFF\u302A-\u302F\u3099\u309A\uA66F-\uA672\uA674-\uA67D\uA69E\uA69F\uA6F0\uA6F1\uA802\uA806\uA80B\uA823-\uA827\uA880\uA881\uA8B4-\uA8C5\uA8E0-\uA8F1\uA8FF\uA926-\uA92D\uA947-\uA953\uA980-\uA983\uA9B3-\uA9C0\uA9E5\uAA29-\uAA36\uAA43\uAA4C\uAA4D\uAA7B-\uAA7D\uAAB0\uAAB2-\uAAB4\uAAB7\uAAB8\uAABE\uAABF\uAAC1\uAAEB-\uAAEF\uAAF5\uAAF6\uABE3-\uABEA\uABEC\uABED\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F]/g, "").replace(NON_DECOMPOSABLE_RE, (ch) => NON_DECOMPOSABLE_MAP[ch]) : (str) => str;
+const MARK_RANGES = "lc 33 7o 6 7c 18 2 0 2 1 2 1 2 0 21 a 1d k h 0 2u 6 3 5 3 1 2 3 10 0 v q 2k a 1n 8 a 0 p 3 2 8 2 2 2 4 18 2 3c e 2 w 1j 2 2 h 2 6 b 1 u 2 1l 0 2 6 3 1 3 2 a 0 b 1 r 0 3 2 1l 0 2 4 5 1 3 2 4 0 v 1 4 0 c 2 1l 0 2 7 2 2 2 2 l 1 n 5 2 2 1l 0 2 6 3 1 3 2 9 1 b 1 v 0 1o 4 4 2 2 3 a 0 15 4 1m 6 2 2 2 3 8 1 c 1 u 2 1l 0 2 6 2 2 2 3 8 1 c 1 t 3 1k 1 2 6 2 2 2 3 a 0 b 1 v 1 1z 0 5 5 2 0 2 7 j 1 1q 0 3 6 d 7 2r 0 3 5 2 1 c 5 23 1 s 0 2 0 2 0 5 1 1e j 2 1 6 a 2 z a 0 2t j o 3 5 2 2 2 3 6 4 3 e b 2 0 b 3 jk 2 qb 2 u 2 u 1 v 1 1t v a 0 1a 2 3c 1 z 0 3b b 5 b 64 4 1m 9 2 s 3 0 1d e 1u 4 1c g 13 8 d 2 v c 1l d 1d j 49 2 2 k 5 0 5 2 3 2 5j 1l 2 4 k1 w 2db 2 3y 0 2p v ff 5 2y 1 n9x 3 2 9 x 1 29 1 7l 0 4 0 5 0 o 4 2h 1 1f h r h e 0 13 7 q c 19 3 1c d 11 0 1w d d 0 9 1 1a 2 1f 0 2 2 3 1 6 1 2 0 16 4 6 1 6l 7 2 1 fn5 0 ki f h f".split(" ");
+let markClass = "";
+for (let i = 0, code = 0; i < MARK_RANGES.length;) markClass += String.fromCharCode(code += parseInt(MARK_RANGES[i++], 36)) + "-" + String.fromCharCode(code += parseInt(MARK_RANGES[i++], 36));
+const COMBINING_MARKS_RE = new RegExp("[" + markClass + "]", "g");
+const stripDiacritics = (str) => str.normalize("NFD").replace(COMBINING_MARKS_RE, "").replace(NON_DECOMPOSABLE_RE, (ch) => NON_DECOMPOSABLE_MAP[ch]);
 
 //#endregion
 //#region src/search/bitap/index.ts
@@ -551,63 +591,55 @@ var BitapSearch = class {
 		pattern = ignoreDiacritics ? stripDiacritics(pattern) : pattern;
 		this.pattern = pattern;
 		this.chunks = [];
-		if (!this.pattern.length) return;
-		const addChunk = (pattern, startIndex) => {
+		for (let i = 0, len = pattern.length; i < len; i += 32) {
+			const startIndex = Math.max(0, Math.min(i, len - 32));
+			const chunk = pattern.substr(startIndex, 32);
+			const alphabet = createPatternAlphabet(chunk);
 			this.chunks.push({
-				pattern,
-				alphabet: createPatternAlphabet(pattern),
+				pattern: chunk,
+				alphabet,
+				table: (/* @__PURE__ */ new Int32Array(256)).map((_, code) => alphabet[code]),
 				startIndex
 			});
-		};
-		const len = this.pattern.length;
-		if (len > 32) {
-			let i = 0;
-			const remainder = len % 32;
-			const end = len - remainder;
-			while (i < end) {
-				addChunk(this.pattern.substr(i, 32), i);
-				i += 32;
-			}
-			if (remainder) {
-				const startIndex = len - 32;
-				addChunk(this.pattern.substr(startIndex), startIndex);
-			}
-		} else addChunk(this.pattern, 0);
+		}
 	}
 	searchIn(text) {
-		const { isCaseSensitive, ignoreDiacritics, includeMatches } = this.options;
+		const { isCaseSensitive, ignoreDiacritics, includeMatches, location, ignoreLocation, minMatchCharLength } = this.options;
 		text = isCaseSensitive ? text : text.toLowerCase();
 		text = ignoreDiacritics ? stripDiacritics(text) : text;
-		if (this.pattern === text) {
-			if (text.length < this.options.minMatchCharLength) return {
-				isMatch: false,
-				score: 1
-			};
-			const result = {
-				isMatch: true,
-				score: 0
-			};
-			if (includeMatches) result.indices = [[0, text.length - 1]];
-			return result;
-		}
-		const { location, distance, threshold, findAllMatches, minMatchCharLength, ignoreLocation } = this.options;
-		const allIndices = [];
-		let totalScore = 0;
+		if (this.pattern === text) return text.length < minMatchCharLength ? {
+			isMatch: false,
+			score: 1
+		} : includeMatches ? {
+			isMatch: true,
+			score: 0,
+			indices: [[0, text.length - 1]]
+		} : {
+			isMatch: true,
+			score: 0
+		};
+		const direct = ignoreLocation && !includeMatches && !(minMatchCharLength > 1);
 		let hasMatches = false;
-		this.chunks.forEach(({ pattern, alphabet, startIndex }) => {
-			const { isMatch, score, indices } = search(text, pattern, alphabet, {
-				location: location + startIndex,
-				distance,
-				threshold,
-				findAllMatches,
-				minMatchCharLength,
-				includeMatches,
-				ignoreLocation
-			});
-			if (isMatch) hasMatches = true;
-			totalScore += score;
-			if (isMatch && indices) allIndices.push(...indices);
-		});
+		let totalScore = 0;
+		for (const chunk of this.chunks) {
+			const r = canMatch(text, chunk, this.options, !direct);
+			if (r) {
+				hasMatches = true;
+				if (!direct) break;
+			}
+			totalScore += r ? Math.max(.001, ~r / chunk.pattern.length) : 1;
+		}
+		const allIndices = [];
+		if (hasMatches && !direct) {
+			hasMatches = false;
+			totalScore = 0;
+			for (const chunk of this.chunks) {
+				const { isMatch, score, indices } = search(text, chunk, location + chunk.startIndex, this.options);
+				if (isMatch) hasMatches = true;
+				totalScore += score;
+				if (isMatch && indices) allIndices.push(...indices);
+			}
+		}
 		const result = {
 			isMatch: hasMatches,
 			score: hasMatches ? totalScore / this.chunks.length : 1
@@ -707,16 +739,14 @@ function parse(query, options, { auto = true } = {}) {
 //#region src/core/computeScore.ts
 function computeScoreSingle(matches, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
 	let totalScore = 1;
-	matches.forEach(({ key, norm, score }) => {
+	for (const { key, norm, score } of matches) {
 		const weight = key ? key.weight : null;
 		totalScore *= Math.pow(score === 0 && weight ? Number.EPSILON : score, (weight || 1) * (ignoreFieldNorm ? 1 : norm));
-	});
+	}
 	return totalScore;
 }
-function computeScore(results, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
-	results.forEach((result) => {
-		result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
-	});
+function computeScore(results, options) {
+	for (const result of results) result.score = computeScoreSingle(result.matches, options);
 }
 
 //#endregion
@@ -727,48 +757,32 @@ var MaxHeap = class {
 		this.heap = [];
 		this.comparator = comparator;
 	}
-	get size() {
-		return this.heap.length;
-	}
 	insert(item) {
-		if (this.size < this.limit) {
-			this.heap.push(item);
-			this._bubbleUp(this.size - 1);
-		} else if (this.comparator(item, this.heap[0]) < 0) {
-			this.heap[0] = item;
-			this._sinkDown(0);
+		const { heap, comparator } = this;
+		let i = heap.length;
+		if (i < this.limit) while (i > 0) {
+			const parent = i - 1 >> 1;
+			if (comparator(item, heap[parent]) <= 0) break;
+			heap[i] = heap[parent];
+			i = parent;
 		}
+		else if (comparator(item, heap[0]) < 0) {
+			const len = i;
+			i = 0;
+			for (;;) {
+				const left = 2 * i + 1;
+				if (left >= len) break;
+				let next = comparator(heap[left], item) > 0 ? left : -1;
+				if (left + 1 < len && comparator(heap[left + 1], next < 0 ? item : heap[left]) > 0) next = left + 1;
+				if (next < 0) break;
+				heap[i] = heap[next];
+				i = next;
+			}
+		} else return;
+		heap[i] = item;
 	}
 	extractSorted() {
 		return this.heap.sort(this.comparator);
-	}
-	_bubbleUp(i) {
-		const heap = this.heap;
-		while (i > 0) {
-			const parent = i - 1 >> 1;
-			if (this.comparator(heap[i], heap[parent]) <= 0) break;
-			const tmp = heap[i];
-			heap[i] = heap[parent];
-			heap[parent] = tmp;
-			i = parent;
-		}
-	}
-	_sinkDown(i) {
-		const heap = this.heap;
-		const len = heap.length;
-		let largest = i;
-		do {
-			i = largest;
-			const left = 2 * i + 1;
-			const right = 2 * i + 2;
-			if (left < len && this.comparator(heap[left], heap[largest]) > 0) largest = left;
-			if (right < len && this.comparator(heap[right], heap[largest]) > 0) largest = right;
-			if (largest !== i) {
-				const tmp = heap[i];
-				heap[i] = heap[largest];
-				heap[largest] = tmp;
-			}
-		} while (largest !== i);
 	}
 };
 
@@ -777,7 +791,7 @@ var MaxHeap = class {
 function formatMatches(result) {
 	const matches = [];
 	result.matches.forEach((match) => {
-		if (!isDefined(match.indices) || !match.indices.length) return;
+		if (!match.indices?.length) return;
 		const obj = {
 			indices: match.indices,
 			value: match.value
@@ -791,7 +805,7 @@ function formatMatches(result) {
 
 //#endregion
 //#region src/core/format.ts
-function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore } = {}) {
+function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore }) {
 	return results.map((result) => {
 		const { idx } = result;
 		const data = {
@@ -925,6 +939,39 @@ function removeAndShiftInvertedIndex(index, removedIndices) {
 
 //#endregion
 //#region src/core/index.ts
+function pushMatches(out, key, value, searcher) {
+	if (isArray(value)) {
+		for (const sub of value) if (sub && isDefined(sub.v)) pushMatch(out, key, sub, true, searcher);
+	} else if (isDefined(value)) pushMatch(out, key, value, false, searcher);
+}
+function pushMatch(out, key, sub, inArray, searcher) {
+	const text = sub.v;
+	const searchResult = searcher.searchIn(text);
+	if (searchResult.isMatch) {
+		const match = inArray ? {
+			score: searchResult.score,
+			key,
+			value: text,
+			idx: sub.i,
+			norm: sub.n,
+			indices: searchResult.indices,
+			hasInverse: searchResult.hasInverse
+		} : {
+			score: searchResult.score,
+			key,
+			value: text,
+			norm: sub.n,
+			indices: searchResult.indices,
+			hasInverse: searchResult.hasInverse
+		};
+		if (searchResult.termCount !== void 0) {
+			match.matchedMask = searchResult.matchedMask;
+			match.matchedTerms = searchResult.matchedTerms;
+			match.termCount = searchResult.termCount;
+		}
+		out.push(match);
+	}
+}
 var Fuse = class {
 	constructor(docs, options, index) {
 		this.options = {
@@ -1031,20 +1078,17 @@ var Fuse = class {
 		const comparator = sortFn;
 		const stable = (a, b) => comparator(a, b) || a.idx - b.idx;
 		let results;
-		if (useHeap) {
-			const heap = new MaxHeap(limit, stable);
-			if (isString(this._docs[0])) this._searchStringList(query, {
-				heap,
+		if (isString(query)) {
+			const opts = {
+				heap: useHeap ? new MaxHeap(limit, stable) : void 0,
 				ignoreFieldNorm
-			});
-			else this._searchObjectList(query, {
-				heap,
-				ignoreFieldNorm
-			});
-			results = heap.extractSorted();
+			};
+			results = isString(this._docs[0]) ? this._searchStringList(query, opts) : this._searchObjectList(query, opts);
 		} else {
-			results = isString(query) ? isString(this._docs[0]) ? this._searchStringList(query) : this._searchObjectList(query) : this._searchLogical(query);
+			results = this._searchLogical(query);
 			computeScore(results, { ignoreFieldNorm });
+		}
+		if (!useHeap) {
 			if (shouldSort) results.sort(isString(query) ? stable : comparator);
 			if (isNumber(limit) && limit > -1) results = results.slice(0, limit);
 		}
@@ -1053,19 +1097,22 @@ var Fuse = class {
 			includeScore
 		});
 	}
-	_searchStringList(query, { heap, ignoreFieldNorm } = {}) {
+	_searchStringList(query, opts = {}) {
+		const heap = opts.heap;
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
-		const { records } = this._myIndex;
-		const results = heap ? null : [];
-		records.forEach(({ v: text, i: idx, n: norm }) => {
-			if (!isDefined(text)) return;
+		const records = this._myIndex.records;
+		const results = [];
+		for (const record of records) {
+			if (!record) continue;
+			const text = record.v;
+			if (!isDefined(text)) continue;
 			const searchResult = searcher.searchIn(text);
 			if (searchResult.isMatch) {
 				const match = {
 					score: searchResult.score,
 					value: text,
-					norm,
+					norm: record.n,
 					indices: searchResult.indices
 				};
 				if (requireAllTokens) {
@@ -1077,106 +1124,60 @@ var Fuse = class {
 				if (!requireAllTokens || this._coversAllTokens(matches)) {
 					const result = {
 						item: text,
-						idx,
+						idx: record.i,
 						matches
 					};
-					if (heap) {
-						result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
-						heap.insert(result);
-					} else results.push(result);
+					result.score = computeScoreSingle(matches, opts);
+					heap ? heap.insert(result) : results.push(result);
 				}
 			}
-		});
-		return results;
+		}
+		return heap ? heap.extractSorted() : results;
 	}
 	_searchLogical(query) {
 		throw new Error(LOGICAL_SEARCH_UNAVAILABLE);
 	}
-	_searchObjectList(query, { heap, ignoreFieldNorm } = {}) {
+	_searchObjectList(query, opts = {}) {
+		const heap = opts.heap;
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
-		const { records } = this._myIndex;
+		const records = this._myIndex.records;
 		const keys = this._normalizedKeys();
-		const results = heap ? null : [];
-		records.forEach(({ $: item, i: idx }) => {
-			if (!isDefined(item)) return;
-			const matches = [];
+		const results = [];
+		let matches = [];
+		for (const record of records) {
+			if (!record) continue;
+			const item = record.$;
+			if (!isDefined(item)) continue;
 			let anyKeyFailed = false;
 			let hasInverse = false;
-			keys.forEach((key, keyIndex) => {
-				const keyMatches = this._findMatches({
-					key,
-					value: item[keyIndex],
-					searcher
-				});
-				if (keyMatches.length) {
-					matches.push(...keyMatches);
-					if (keyMatches[0].hasInverse) hasInverse = true;
+			for (let k = 0; k < keys.length; k += 1) {
+				const start = matches.length;
+				pushMatches(matches, keys[k], item[k], searcher);
+				if (matches.length > start) {
+					if (matches[start].hasInverse) hasInverse = true;
 				} else anyKeyFailed = true;
-			});
-			if (hasInverse && anyKeyFailed) return;
-			if (matches.length && (!requireAllTokens || this._coversAllTokens(matches))) {
+			}
+			if (matches.length && !(hasInverse && anyKeyFailed) && (!requireAllTokens || this._coversAllTokens(matches))) {
 				const result = {
-					idx,
+					idx: record.i,
 					item,
 					matches
 				};
-				if (heap) {
-					result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
-					heap.insert(result);
-				} else results.push(result);
-			}
-		});
-		return results;
+				result.score = computeScoreSingle(matches, opts);
+				heap ? heap.insert(result) : results.push(result);
+				matches = [];
+			} else matches.length = 0;
+		}
+		return heap ? heap.extractSorted() : results;
 	}
 	_findMatches({ key, value, searcher }) {
-		if (!isDefined(value)) return [];
 		const matches = [];
-		if (isArray(value)) value.forEach(({ v: text, i: idx, n: norm }) => {
-			if (!isDefined(text)) return;
-			const searchResult = searcher.searchIn(text);
-			if (searchResult.isMatch) {
-				const match = {
-					score: searchResult.score,
-					key,
-					value: text,
-					idx,
-					norm,
-					indices: searchResult.indices,
-					hasInverse: searchResult.hasInverse
-				};
-				if (searchResult.termCount !== void 0) {
-					match.matchedMask = searchResult.matchedMask;
-					match.matchedTerms = searchResult.matchedTerms;
-					match.termCount = searchResult.termCount;
-				}
-				matches.push(match);
-			}
-		});
-		else {
-			const { v: text, n: norm } = value;
-			const searchResult = searcher.searchIn(text);
-			if (searchResult.isMatch) {
-				const match = {
-					score: searchResult.score,
-					key,
-					value: text,
-					norm,
-					indices: searchResult.indices,
-					hasInverse: searchResult.hasInverse
-				};
-				if (searchResult.termCount !== void 0) {
-					match.matchedMask = searchResult.matchedMask;
-					match.matchedTerms = searchResult.matchedTerms;
-					match.termCount = searchResult.termCount;
-				}
-				matches.push(match);
-			}
-		}
+		pushMatches(matches, key, value, searcher);
 		return matches;
 	}
 	_coversAllTokens(matches) {
-		const termCount = matches.length ? matches[0].termCount : void 0;
+		const termCount = matches[0].termCount;
 		if (termCount === void 0) return true;
 		if (termCount <= 31) {
 			let coverage = 0;
