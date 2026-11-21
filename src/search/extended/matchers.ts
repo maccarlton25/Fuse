@@ -34,180 +34,158 @@ export function isInverse(type: string): boolean {
   return type.startsWith('inverse')
 }
 
+// The BitapSearch options the fuzzy matcher resolves against Config (with
+// `??`, so a null option also takes the default).
+const FUZZY_OPTION_KEYS =
+  'location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation'.split(
+    ' '
+  )
+
 // ── Matcher definitions ───────────────────────────────────────────
 //
 // Order matters — parseQuery tries each in sequence and uses the
 // first match. FuzzyMatch (catch-all) must be last.
+//
+// `def` builds the detection regex pair from the operator's prefix and
+// suffix (regex source): multiRegex is /^<prefix>"(.*)"<suffix>$/ and
+// singleRegex is /^<prefix>(.*)<suffix>$/.
+const def = (
+  type: string,
+  prefix: string,
+  suffix: string,
+  create: MatcherDef['create']
+): MatcherDef => ({
+  type,
+  multiRegex: new RegExp(`^${prefix}"(.*)"${suffix}$`),
+  singleRegex: new RegExp(`^${prefix}(.*)${suffix}$`),
+  create
+})
 
-// prettier-ignore
 const matchers: MatcherDef[] = [
   // =term — exact match
-  {
+  def('exact', '=', '', (pattern) => ({
     type: 'exact',
-    multiRegex: /^="(.*)"$/,
-    singleRegex: /^=(.*)$/,
-    create: (pattern) => ({
-      type: 'exact',
-      search(text) {
-        const isMatch = text === pattern
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [0, pattern.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // 'term — include (substring) match
-  {
-    type: 'include',
-    multiRegex: /^'"(.*)"$/,
-    singleRegex: /^'(.*)$/,
-    create: (pattern) => ({
-      type: 'include',
-      search(text) {
-        let location = 0
-        let index: number
-        const indices: RangeTuple[] = []
-        const patternLen = pattern.length
-
-        // Defense in depth: an empty pattern makes indexOf return `location`
-        // forever (patternLen is 0, so `location` never advances) — an infinite
-        // loop. Callers filter empty patterns (parseQuery's truthiness check,
-        // the object compiler's post-normalization guard), but the matcher is a
-        // shared primitive plugin authors can construct directly, so guard here.
-        if (!patternLen) {
-          return { isMatch: false, score: 1, indices }
-        }
-
-        while ((index = text.indexOf(pattern, location)) > -1) {
-          location = index + patternLen
-          indices.push([index, location - 1])
-        }
-
-        const isMatch = !!indices.length
-        return { isMatch, score: isMatch ? 0 : 1, indices }
-      }
-    })
-  },
-
-  // ^term — prefix match
-  {
-    type: 'prefix-exact',
-    multiRegex: /^\^"(.*)"$/,
-    singleRegex: /^\^(.*)$/,
-    create: (pattern) => ({
-      type: 'prefix-exact',
-      search(text) {
-        const isMatch = text.startsWith(pattern)
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [0, pattern.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // !^term — inverse prefix match
-  {
-    type: 'inverse-prefix-exact',
-    multiRegex: /^!\^"(.*)"$/,
-    singleRegex: /^!\^(.*)$/,
-    create: (pattern) => ({
-      type: 'inverse-prefix-exact',
-      search(text) {
-        const isMatch = !text.startsWith(pattern)
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [0, text.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // !term$ — inverse suffix match
-  {
-    type: 'inverse-suffix-exact',
-    multiRegex: /^!"(.*)"\$$/,
-    singleRegex: /^!(.*)\$$/,
-    create: (pattern) => ({
-      type: 'inverse-suffix-exact',
-      search(text) {
-        const isMatch = !text.endsWith(pattern)
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [0, text.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // term$ — suffix match
-  {
-    type: 'suffix-exact',
-    multiRegex: /^"(.*)"\$$/,
-    singleRegex: /^(.*)\$$/,
-    create: (pattern) => ({
-      type: 'suffix-exact',
-      search(text) {
-        const isMatch = text.endsWith(pattern)
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [text.length - pattern.length, text.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // !term — inverse exact (does not contain)
-  {
-    type: 'inverse-exact',
-    multiRegex: /^!"(.*)"$/,
-    singleRegex: /^!(.*)$/,
-    create: (pattern) => ({
-      type: 'inverse-exact',
-      search(text) {
-        const isMatch = text.indexOf(pattern) === -1
-        return {
-          isMatch,
-          score: isMatch ? 0 : 1,
-          indices: [0, text.length - 1] as unknown as RangeTuple[]
-        }
-      }
-    })
-  },
-
-  // term — fuzzy match (catch-all, must be last)
-  {
-    type: 'fuzzy',
-    multiRegex: /^"(.*)"$/,
-    singleRegex: /^(.*)$/,
-    create: (pattern, options = {}) => {
-      const bitap = new BitapSearch(pattern, {
-        location: options.location ?? Config.location,
-        threshold: options.threshold ?? Config.threshold,
-        distance: options.distance ?? Config.distance,
-        includeMatches: options.includeMatches ?? Config.includeMatches,
-        findAllMatches: options.findAllMatches ?? Config.findAllMatches,
-        minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
-        isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
-        ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
-        ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation
-      })
-
+    search(text) {
+      const isMatch = text === pattern
       return {
-        type: 'fuzzy',
-        search(text) {
-          return bitap.searchIn(text)
-        }
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [0, pattern.length - 1] as unknown as RangeTuple[]
       }
     }
-  }
+  })),
+
+  // 'term — include (substring) match
+  def('include', "'", '', (pattern) => ({
+    type: 'include',
+    search(text) {
+      let location = 0
+      let index: number
+      const indices: RangeTuple[] = []
+      const patternLen = pattern.length
+
+      // Defense in depth: an empty pattern makes indexOf return `location`
+      // forever (patternLen is 0, so `location` never advances) — an infinite
+      // loop. Callers filter empty patterns (parseQuery's truthiness check,
+      // the object compiler's post-normalization guard), but the matcher is a
+      // shared primitive plugin authors can construct directly, so guard here.
+      if (!patternLen) {
+        return { isMatch: false, score: 1, indices }
+      }
+
+      while ((index = text.indexOf(pattern, location)) > -1) {
+        location = index + patternLen
+        indices.push([index, location - 1])
+      }
+
+      const isMatch = !!indices.length
+      return { isMatch, score: isMatch ? 0 : 1, indices }
+    }
+  })),
+
+  // ^term — prefix match
+  def('prefix-exact', '\\^', '', (pattern) => ({
+    type: 'prefix-exact',
+    search(text) {
+      const isMatch = text.startsWith(pattern)
+      return {
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [0, pattern.length - 1] as unknown as RangeTuple[]
+      }
+    }
+  })),
+
+  // !^term — inverse prefix match
+  def('inverse-prefix-exact', '!\\^', '', (pattern) => ({
+    type: 'inverse-prefix-exact',
+    search(text) {
+      const isMatch = !text.startsWith(pattern)
+      return {
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [0, text.length - 1] as unknown as RangeTuple[]
+      }
+    }
+  })),
+
+  // !term$ — inverse suffix match
+  def('inverse-suffix-exact', '!', '\\$', (pattern) => ({
+    type: 'inverse-suffix-exact',
+    search(text) {
+      const isMatch = !text.endsWith(pattern)
+      return {
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [0, text.length - 1] as unknown as RangeTuple[]
+      }
+    }
+  })),
+
+  // term$ — suffix match
+  def('suffix-exact', '', '\\$', (pattern) => ({
+    type: 'suffix-exact',
+    search(text) {
+      const isMatch = text.endsWith(pattern)
+      return {
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [
+          text.length - pattern.length,
+          text.length - 1
+        ] as unknown as RangeTuple[]
+      }
+    }
+  })),
+
+  // !term — inverse exact (does not contain)
+  def('inverse-exact', '!', '', (pattern) => ({
+    type: 'inverse-exact',
+    search(text) {
+      const isMatch = text.indexOf(pattern) === -1
+      return {
+        isMatch,
+        score: isMatch ? 0 : 1,
+        indices: [0, text.length - 1] as unknown as RangeTuple[]
+      }
+    }
+  })),
+
+  // term — fuzzy match (catch-all, must be last)
+  def('fuzzy', '', '', (pattern, options = {}) => {
+    const resolved: any = {}
+    for (const key of FUZZY_OPTION_KEYS) {
+      resolved[key] = options[key] ?? (Config as any)[key]
+    }
+    const bitap = new BitapSearch(pattern, resolved)
+
+    return {
+      type: 'fuzzy',
+      search(text) {
+        return bitap.searchIn(text)
+      }
+    }
+  })
 ]
 
 export default matchers
