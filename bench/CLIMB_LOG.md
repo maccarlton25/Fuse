@@ -232,3 +232,218 @@ gzip. Bitap + extended alone (`004d068`) pass rev 2 on all four seeds.
 5. Cosmetic: the error text for a non-string in a string list changes.
 
 **prefilter**: rejected for a slowdown on long fields. A fix is in progress, to be ported in generation 2.
+
+## Generation 2
+
+Branch `climb/gen2-best`, built from `climb/gen1-best` (`f67c9c0`). First a
+merge of the `climb/base` guards (`4d3a960`: `bench/match-fuzz.mjs`,
+`bench/index-api-fuzz.mjs`, field-length probe rev 2; tool files only, no
+`src/` or `dist/` change), then the three accepted branches in the order
+core, size, myers. Every merge is `--no-ff`; every individual commit is
+preserved. There were no source conflicts. `dist/` was rebuilt with
+`npm run build` on every merge. For core there was no textual conflict and
+the rebuild matched `971ed50`'s committed `dist/`. For size and myers the
+five minified files conflicted and the rebuild resolved them. No `dist/`
+file was edited by hand. None of the three branches had moved past the
+commit listed in the brief when it was merged.
+
+### Branches
+
+| Branch | Merged at | Merge commit | Review | Verdict | In gen2-best? |
+|---|---|---|---|---|---|
+| `climb/base` (guards) | `4d3a960` | `efbd65e` | — | — | Yes, tools only. Not merged again afterwards |
+| `climb/gen2-core` | `971ed50` | `9234df4` | `msg_e0018c74-2337-404c-a715-4b4bbea4a189_1` | ACCEPT WITH FOLLOW-UPS | Yes |
+| `climb/gen2-size` | `593c174` | `6566ab1` | `msg_0e3b6dad-904d-4b2b-87c9-9c683a334011_1` | ACCEPT WITH FOLLOW-UPS | Yes |
+| `climb/gen2-myers` | `3f05f16` | `8a05651` | `msg_62cb5b2d-7061-4b45-8ee0-8b1b4a42e835_1` | ACCEPT WITH FOLLOW-UPS | Yes (it carries `climb/gen1-prefilter` via `22e7764`) |
+| `climb/gen2-index` | head `c90758b` | — | `msg_c1e15dc4-49d4-43aa-96c6-bc0c2967cfc4_1` | **REJECT** | **No** |
+
+**Why `climb/gen2-index` was left out.** The reviewer confirmed two parity
+divergences from the baseline, neither of which exists on `climb/gen1-best`:
+- **D1:** `FuseIndex.removeAll(new Set([1,2]))` throws
+  `TypeError: indices.filter is not a function`. The baseline returns a result.
+- **D2:** index creation reads `item.v` once where the baseline (and
+  gen1-best) read it three times. With a custom `getFn` whose items have a
+  stateful `v` getter, the branch builds a different index (`"first"` vs `"later"`).
+
+`bench/index-api-fuzz.mjs` is the guard that catches this. The reviewer
+measured index build about 1.65x faster (6.13 to 3.70 ms, about +8–9%
+composite) for +70 B gzip, and tried a small local fix that he did not push
+(`[...indices].filter` and three reads of `item.v`; +14 B). The repair
+belongs to generation 3.
+
+**Correction to generation 1: `climb/gen1-prefilter`.** The second review
+(thread `msg_83400ea0-545f-4fbe-a9fb-76ec0d84cb55_1`, head `6efdf42`) ended in
+**REJECT**, finding R1. When the only hit in a field is an exact copy of the
+query near `location`, and the window `threshold × distance` is wide, the
+filter walks the whole window. The baseline settles that case at once with
+its `indexOf` pre-pass. Measured slowdowns: 8.2x at 1,000 characters with
+`distance: 1000`, 40x at 10,000 with `distance: 1e4`, 23x at 1M with
+`distance: 1e6`. Its output was byte-identical (600,000 window-edge triples, 0
+mismatches). The generation 1 section above says only "fix in progress". The
+branch was never merged directly. `climb/gen2-myers` ports it (merge
+`22e7764`) and answers R1 in `733e402`, but only for windows longer than 256
+positions (see the `lone hit` cells below).
+
+### Gate on the final tree (`8a05651`)
+
+```
+npm run typecheck                     -> OK
+npm run build                         -> OK
+npm test                              -> Test Files 30 passed (30) / Tests 530 passed (530)
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5626 seed=1 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5655 seed=2 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5485 seed=3 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5637 seed=4 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5510 seed=71 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5479 seed=72 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5456 seed=73 candidate=../dist/fuse.mjs
+PARITY_FUZZ_OK rev=2 cases=400 comparisons=5583 seed=74 candidate=../dist/fuse.mjs
+MATCH_FUZZ_OK cases=150000 seed=1 mismatches=0 candThrowsOnly=0 baseThrowsOnly=9957 baselineMatchRate=0.392
+MATCH_FUZZ_OK cases=150000 seed=2 mismatches=0 candThrowsOnly=0 baseThrowsOnly=9968 baselineMatchRate=0.392
+MATCH_FUZZ_OK cases=150000 seed=3 mismatches=0 candThrowsOnly=0 baseThrowsOnly=10121 baselineMatchRate=0.391
+candidate retains -0.01 MB heap and 0.02 MB ArrayBuffer more than baseline
+RETENTION_PROBE_OK
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=1 mismatches=0
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=2 mismatches=0
+INDEX_API_FUZZ_OK removeAll=4000 reads=4000 seed=3 mismatches=0
+f6831f6ca705fa7f76cb8ceb5a8aed4c85b8dad0ed53e2f7ec36e61f3fb99693  bench/hillclimb.mjs     (matches AGENTS.md)
+2c4938f54cacee4ab2e68aa3b3c6126c04d9e4394baa3d691a36acc1907ef71f  bench/baseline-fuse.mjs (matches AGENTS.md)
+git status --short dist/              -> empty
+```
+
+The parity fuzzer ran **without** `--no-sparse-records`, so the sparse-records
+regression in `climb/gen1-best` is fixed (by `climb/gen2-core`). Match-fuzz
+reads 0 mismatches, so the fractional-`location` defect is fixed (by
+`climb/gen2-myers` `167366d`). The retention probe reads 0.02 MB, against
+114.44 MB on gen1-best, so the pinned buffers are fixed (by `climb/gen2-myers`
+`b133ac3`).
+
+**Field-length probe rev 2**: `FIELD_LENGTH_PROBE_FAIL` on both runs. That is
+expected and does not fail this gate. The rule is that every `SLOWER` line
+must be a `lone hit*` mode, at field length 1,000 or less, with a ratio below
+2.5, and that no `RESULT MISMATCH` appears. Both runs satisfy it, with 0
+`MISMATCH` lines. Every non-`lone hit` cell is 0.06–0.68 of the baseline.
+The marked lines:
+
+```
+run 1:
+lone hit dflt         40   5000        5.114         6.873       1.34  SLOWER
+lone hit dflt        200   1000        0.825         1.108       1.34  SLOWER
+lone hit dflt       1000    200        0.181         0.234       1.29  SLOWER
+lone hit             200   1000        0.859         1.890       2.20  SLOWER
+lone hit+match       200   1000        1.823         2.961       1.62  SLOWER
+run 2:
+lone hit dflt        200   1000        0.809         1.077       1.33  SLOWER
+lone hit dflt       1000    200        0.172         0.225       1.31  SLOWER
+lone hit             200   1000        0.817         1.821       2.23  SLOWER
+lone hit+match       200   1000        1.767         2.932       1.66  SLOWER
+```
+
+`lone hit dflt` at 40 characters read 1.34 in run 1 and 1.05 in run 2, so it
+is borderline noise. The owner's trial did not mark this cell.
+
+### Verifier runs on `climb/gen2-best` (`8a05651`)
+
+All five runs PASS with 38 parity checks. `dist/fuse.min.mjs` is 9752 B gzip
+(−3.65% vs base, cap 10628 B). Each cell is speedup (baseline→candidate ms).
+
+| run | bitap_fuzzy | bitap_matches | topk_limit10 | extended_logical | token_inverted | index_diacritics_mutate | composite | gzip |
+|---|---|---|---|---|---|---|---|---|
+| train #1 | 14.778x (799.8→54.1) | 12.197x (798.4→65.5) | 15.295x (757.0→49.5) | 8.486x (226.6→26.7) | 20.900x (1758.0→84.1) | 0.990x (5.87→5.93) | **8.8612x** | 9752 B |
+| train #2 | 14.246x (753.7→52.9) | 12.215x (789.4→64.6) | 15.271x (770.9→50.5) | 9.475x (257.2→27.1) | 21.064x (1764.7→83.8) | 1.013x (5.3→5.3) | **9.0160x** | 9752 B |
+| train #3 | 14.437x (744.9→51.6) | 12.188x (805.8→66.1) | 16.104x (803.1→49.9) | 8.885x (223.4→25.1) | 20.528x (1742.3→84.9) | 0.943x (7.7→8.2) | **8.8717x** | 9752 B |
+| holdout #1 | 14.419x (756.8→52.5) | 11.942x (786.5→65.9) | 15.221x (766.4→50.4) | 8.575x (220.7→25.7) | 20.810x (1809.0→86.9) | 1.000x (5.4→5.4) | **8.8099x** | 9752 B |
+| holdout #2 | 16.320x (881.6→54.0) | 11.443x (793.7→69.4) | 14.833x (749.9→50.6) | 8.568x (223.9→26.1) | 20.269x (1736.7→85.7) | 0.977x (5.5→5.6) | **8.8172x** | 9752 B |
+
+Compared with generation 1 (same verifier, five runs above):
+
+| | train composite | holdout composite | gzip |
+|---|---|---|---|
+| `climb/gen1-best` | 3.565–3.660x | 3.592–3.666x | 10269 B |
+| `climb/gen2-best` | 8.861–9.016x | 8.810–8.817x | 9752 B |
+
+- That is about **2.45x** over gen1-best, and holdout agrees with train.
+- The owner's trial of the same merge read 10.31x train in another sandbox.
+  This sandbox reads 8.86–9.02x for the same code.
+- `index_diacritics_mutate` is in the noise band (0.94–1.01x), as expected
+  with the index track left out.
+
+### Per-merge `node bench/climb-profile.mjs all --rounds 7`
+
+This is the indicative in-process profiler: baseline→candidate ms and speedup.
+The baseline column drifts between runs.
+
+| stage (HEAD) | fuzzy | matches | topk | extended | token | index | geomean | gzip |
+|---|---|---|---|---|---|---|---|---|
+| gen1-best + base guards (`efbd65e`) | 553.55→178.80, 3.096x | 540.40→155.48, 3.476x | 496.28→123.19, 4.029x | 162.62→51.21, 3.176x | 1232.33→252.88, 4.873x | 6.42→7.21, 0.891x | 2.9025x | 10269 B |
+| + core (`9234df4`) | 544.91→134.85, 4.041x | 556.28→153.86, 3.616x | 522.33→123.84, 4.218x | 160.04→49.13, 3.258x | 1170.11→239.76, 4.880x | 6.56→6.54, 1.003x | 3.1532x | 10263 B |
+| + size (`6566ab1`) | 524.82→131.46, 3.992x | 540.20→151.88, 3.557x | 512.45→126.30, 4.057x | 161.67→50.46, 3.204x | 1202.20→245.67, 4.894x | 6.91→6.50, 1.064x | 3.1415x | 9531 B |
+| + myers (`8a05651`) | 513.32→51.83, 9.903x | 534.81→67.13, 7.967x | 501.24→48.27, 10.385x | 160.41→27.26, 5.885x | 1187.44→86.75, 13.689x | 5.99→6.25, 0.958x | 6.3120x | 9752 B |
+
+- **Core:** token 252.9→239.8 ms, consistent with its review's +3%. The
+  fuzzy 178.8→134.9 ms step in this run is probably noise in the first row.
+- **Size:** speed-neutral; −732 B gzip on the merged tree.
+- **Myers:** all of the large gain comes from here (about 2.5–3x on the
+  search workloads), for +221 B gzip.
+
+### Bundle size
+
+`dist/fuse.min.mjs` is 9752 B gzip:
+- 517 B below gen1-best's 10269 B;
+- 447 B below the 10199 B base;
+- 876 B under the cap.
+
+Per merge: 10269 B (guards), then 10263 B (+core, −6), 9531 B (+size, −732)
+and 9752 B (+myers, +221).
+
+### What became of generation 1's open follow-ups
+
+| follow-up | status |
+|---|---|
+| bitap 1: scratch buffers pin memory | **Fixed** (`b133ac3`, gen2-myers). Retention probe OK at 0.02 MB |
+| bitap 2: `location: NaN` returns where the baseline throws | **Still open**, an accepted divergence (counted as baseline-only throws in match-fuzz) |
+| bitap 3: `Int32Array(256)` table per chunk | **Still open** (cost only, unconfirmed) |
+| extended 1: `isInverse` via `.some` per group, `MULTI_MATCH_TYPES.has` per matcher | **Still open** |
+| extended 2: result objects held until the group finishes | Closed (checked in gen 1, guarded by `3398a27`) |
+| extended 3: unreachable `existing.matches.push` dedupe | **Still open** |
+| topk 1: sparse `records` throw | **Fixed** (`f8abdfe`, gen2-core). The parity fuzzer passes without `--no-sparse-records` |
+| topk 2: `_findMatches` wrapper allocates for `_searchLogical` | **Still open** |
+| topk 3: commit bodies should quote medians | Still applies as a process note (the gen2-size review also notes missing ms figures) |
+| topk 4: `MaxHeap` members dropped from `dist/fuse.d.ts` | Dropped: internal and not exported |
+| index 1–5 | Fixed on `climb/gen2-index` (each verified by its reviewer), but that branch is not merged, so **still open here**. They carry into gen 3 together with D1/D2 |
+| prefilter (long-field slowdown) | Ported through gen2-myers. R1 is fixed for windows longer than 256 positions; the residual is the `lone hit` cells (below) |
+
+### New open follow-ups from the generation 2 reviews (not implemented here)
+
+**gen2-core** (`msg_e0018c74`):
+1. Token search now relies on the bitap kernel ignoring `isCaseSensitive`/`ignoreDiacritics`. gen2-myers preserves this (`test/token-normalize-parity.test.js` passes on the merged tree); any future kernel change must keep it.
+2. Merge risk around the restructured `search()`/`_searchLogical`. Checked here: no conflict, and rev 2 fuzz passes on 8 seeds.
+3. The retention probe failure: **fixed** on the merged tree by gen2-myers.
+4. Minor: both scans allocate an unused `results` array when a heap is passed.
+5. Accepted direction: a present `null`/`undefined` record in a hand-built index is skipped where the baseline throws.
+
+**gen2-size** (`msg_0e3b6dad`):
+1. `Fuse.parseQuery(...)` leaf `searcher.options` for extended and object leaves now holds raw values (or `{}`) instead of the 9 resolved keys, in the non-minified builds. Search results are unaffected. Architect's call.
+2. `Fuse.match(5,'abc',{useExtendedSearch:true})` now throws `value.toLowerCase is not a function` instead of `pattern.toLowerCase…` (non-minified builds only). The fix is to rename `normalizeValue`'s parameter back to `pattern` (0 B minified).
+3. Nit: a comment in `diacritics.ts` cites `.js` instead of `.ts` and "~570 B" instead of 604 B. Commit bodies lack target-workload ms.
+
+**gen2-myers** (`msg_62cb5b2d`):
+1. **F1:** when the filter passes and the kernel still runs over a wide window, the extra Myers pass is slower than gen1-best, though still faster than the baseline:
+   - `ignoreLocation + includeMatches` on 100k fields: 1.60x;
+   - a 1M field with `distance 1e6, threshold 0.9`: 1.91x;
+   - 10k fields with `distance 1e4`: 1.40x;
+   - 1k fields with `threshold 0.9`: 1.31x.
+
+   Fix: with `ignoreLocation`, let `canMatch` return as soon as `score < m && score/m <= threshold`, instead of walking the whole text to find `best`.
+2. F2 (accepted): for NaN or fractional `location`, the baseline throws where the branch returns.
+3. **`lone hit` probe cells (required fix for generation 3).** The R1 shortcut (`733e402`) applies only to windows longer than 256 positions. Shorter windows walk position by position with a `calcScore` per step. On this merged tree:
+   - `lone hit` at 200: 2.20 / 2.23;
+   - `lone hit+match` at 200: 1.62 / 1.66;
+   - `lone hit dflt` at 200 and 1,000: 1.29–1.34 (and 1.34 / 1.05 at 40).
+
+   The owner's figures on `3f05f16` were 1.87–2.02, 1.39–1.45 and 1.15–1.29. The worker reports that removing the 256 guard costs 5–6% on the fuzzy workloads. Gate: field-length probe rev 2 must print `FIELD_LENGTH_PROBE_OK`.
+
+**gen2-index** (`msg_c1e15dc4`, not merged): D1 and D2 above are blocking. Also:
+- **D3** (non-blocking, contrived): the same record object appearing twice in `parseIndex` records changes the `removeAll` result. Restoring the two-pass `removeAll` fixes D1 and D3 together.
+- **Nit:** `isArray = Array.isArray` is captured when the module loads.
+- **Commit hygiene:** merge `85d03e8` has an empty body; the `.d.ts` change in `f8e3afe` was only undone in `c90758b`.
