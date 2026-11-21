@@ -370,3 +370,24 @@ describe('object records match the baseline key for key', () => {
     }
   })
 })
+
+describe('cached field norms match the baseline for any weight', () => {
+  test('norms that round to 0, NaN, negative and huge weights', () => {
+    const docs = ['a', 'a b', 'a b c d e f g h i j', 'w '.repeat(5000), '', ' ']
+    for (const fieldNormWeight of [0, 1, 7, 50, -1, NaN, Infinity, 1e-9]) {
+      const a = new Fuse(docs.slice(), { fieldNormWeight })
+      const b = new BaselineFuse(docs.slice(), { fieldNormWeight })
+      expect(JSON.stringify(a.getIndex().toJSON())).toBe(
+        JSON.stringify(b.getIndex().toJSON())
+      )
+      // second pass over the same norm cache
+      for (const d of docs) {
+        a.add(d)
+        b.add(d)
+      }
+      expect(JSON.stringify(a.getIndex().toJSON())).toBe(
+        JSON.stringify(b.getIndex().toJSON())
+      )
+    }
+  })
+})

@@ -13,7 +13,7 @@ export default function norm(
   weight: number = 1,
   mantissa: number = 3
 ): NormInterface {
-  const cache = new Map<number, number>()
+  let cache: number[] = []
   const m = Math.pow(10, mantissa)
 
   return {
@@ -37,21 +37,18 @@ export default function norm(
       }
       // Empty strings and all-whitespace strings have no real words; treat
       // them as a single token so the formula never divides by zero.
-      if (numTokens === 0) numTokens = 1
+      numTokens = numTokens || 1
 
-      if (cache.has(numTokens)) {
-        return cache.get(numTokens)!
-      }
-
-      // Default function is 1/sqrt(x), weight makes that variable
-      const n = Math.round(m / Math.pow(numTokens, 0.5 * weight)) / m
-
-      cache.set(numTokens, n)
-
-      return n
+      // Default function is 1/sqrt(x), weight makes that variable. A value
+      // of 0 is never cached, only recomputed.
+      return (
+        cache[numTokens] ||
+        (cache[numTokens] =
+          Math.round(m / Math.pow(numTokens, 0.5 * weight)) / m)
+      )
     },
     clear() {
-      cache.clear()
+      cache = []
     }
   }
 }

@@ -193,7 +193,7 @@ const Config = Object.freeze({
 //#region src/tools/fieldNorm.ts
 const RARE_SEPARATORS = /[\t-\r\xa0]/;
 function norm(weight = 1, mantissa = 3) {
-	const cache = /* @__PURE__ */ new Map();
+	let cache = [];
 	const m = Math.pow(10, mantissa);
 	return {
 		get(value) {
@@ -208,14 +208,11 @@ function norm(weight = 1, mantissa = 3) {
 					if (!rare && (i = value.indexOf(" ", i)) < 0) break;
 				}
 			}
-			if (numTokens === 0) numTokens = 1;
-			if (cache.has(numTokens)) return cache.get(numTokens);
-			const n = Math.round(m / Math.pow(numTokens, .5 * weight)) / m;
-			cache.set(numTokens, n);
-			return n;
+			numTokens = numTokens || 1;
+			return cache[numTokens] || (cache[numTokens] = Math.round(m / Math.pow(numTokens, .5 * weight)) / m);
 		},
 		clear() {
-			cache.clear();
+			cache = [];
 		}
 	};
 }
