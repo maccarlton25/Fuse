@@ -45,14 +45,15 @@ export default function canMatch(
   let best = m
   // A start p with D(p) = d can only pass if d / m <= threshold (the location
   // term adds a nonnegative amount when distance > 0), so compare the running
-  // count with kmax, the largest such d, before calling calcScore. floor()
-  // may be off by one either way from the float test, hence the two fix-ups.
-  // NaN threshold gives NaN, which no count passes, as in calcScore. With
-  // distance <= 0 or NaN a far position may pass with any count: kmax = m,
-  // the largest possible count, so every position takes calcScore as before.
-  let kmax = Math.min(m, Math.floor(threshold * m))
-  if (kmax < m && (kmax + 1) / m <= threshold) kmax++
-  if (kmax / m > threshold) kmax--
+  // count with kmax, the largest such d, before calling calcScore. The loop
+  // finds it with the same float test d / m <= threshold, comparing only (no
+  // arithmetic on threshold, which may be any value such as a BigInt, as in
+  // the kernel); it stops at m. A NaN or negative threshold leaves kmax = -1,
+  // which no count passes, as in calcScore. With distance <= 0 or NaN a far
+  // position may pass with any count: kmax = m, the largest possible count,
+  // so every position takes calcScore as before.
+  let kmax = -1
+  while (kmax < m && (kmax + 1) / m <= threshold) kmax++
   if (ignoreLocation) {
     if (kmax >= m) kmax = m - 1
   } else if (!(distance > 0)) kmax = m

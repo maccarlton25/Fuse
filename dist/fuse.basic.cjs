@@ -492,9 +492,8 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 	let mv = 0;
 	let score = m;
 	let best = m;
-	let kmax = Math.min(m, Math.floor(threshold * m));
-	if (kmax < m && (kmax + 1) / m <= threshold) kmax++;
-	if (kmax / m > threshold) kmax--;
+	let kmax = -1;
+	while (kmax < m && (kmax + 1) / m <= threshold) kmax++;
 	if (ignoreLocation) {
 		if (kmax >= m) kmax = m - 1;
 	} else if (!(distance > 0)) kmax = m;
