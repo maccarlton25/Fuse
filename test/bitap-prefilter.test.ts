@@ -368,3 +368,59 @@ describe('bitap direct answers for ignoreLocation', () => {
     expect(matched).toBeGreaterThan(N / 10)
   }, 600000)
 })
+
+// An exact copy inside the window short-circuits the Myers walk (re-review
+// finding R1: an exact hit near `location` in a wide window made the filter
+// walk the whole window). The shortcut must still reject for negative or NaN
+// thresholds and stay exact for ignoreLocation direct answers.
+describe('bitap reject filter: exact copy in the window', () => {
+  test('agrees with the baseline at window edges and odd thresholds', () => {
+    const FILLER = 'qwrtuvz'
+    const base = Array.from(
+      { length: 3000 },
+      (_, i) => FILLER[(i * 7) % 7]
+    ).join('')
+    for (const pattern of [
+      'ab',
+      'quokka',
+      'abcdefghijklmnopqrstuvwxyzABCDEFGHIJ'
+    ]) {
+      for (const threshold of [0, 0.3, 0.6, 1, -0.1, NaN, Infinity]) {
+        for (const distance of [0, 10, 1000, 1e6, -5]) {
+          for (const location of [0, 1500, 3000, 9000]) {
+            const edge = Math.floor(Math.abs(threshold * distance)) || 0
+            for (const at of [
+              0,
+              1500,
+              2990,
+              location + edge,
+              location - edge,
+              location + edge + 1
+            ]) {
+              const p = Math.max(0, Math.min(base.length, at))
+              const text = base.slice(0, p) + pattern + base.slice(p)
+              for (const ignoreLocation of [false, true]) {
+                for (const includeMatches of [false, true]) {
+                  const options = {
+                    threshold,
+                    distance,
+                    location,
+                    ignoreLocation,
+                    includeMatches
+                  }
+                  expect(
+                    JSON.stringify(
+                      new BitapSearch(pattern, options).searchIn(text)
+                    )
+                  ).toBe(
+                    JSON.stringify(BaselineFuse.match(pattern, text, options))
+                  )
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }, 600000)
+})

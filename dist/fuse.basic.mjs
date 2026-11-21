@@ -503,6 +503,7 @@ function canMatch(text, { pattern, alphabet, table, startIndex }, { location, di
 	let mv = 0;
 	let score = m;
 	let best = m;
+	if (j - stop > 256 && threshold >= 0 && text.slice(stop, j).includes(pattern)) return -1;
 	while (j-- > stop) {
 		const c = text.charCodeAt(j);
 		const eq = table[c] ?? alphabet[c] | 0;

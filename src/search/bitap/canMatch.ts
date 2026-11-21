@@ -40,6 +40,14 @@ export default function canMatch(
   let mv = 0
   let score = m
   let best = m
+  // An exact copy inside [stop, j) has D = 0: accept without walking the
+  // window down to it (O(threshold * distance) when it is the only hit, where
+  // the kernel's indexOf pre-pass stops at once). The slice keeps the search
+  // inside the window (V8 slices without copying). With ignoreLocation, ~0 is
+  // the exact direct answer (k = 0) for any threshold >= 0. A negative
+  // threshold takes the walk: with a negative distance it can still match.
+  if (j - stop > 256 && threshold >= 0 && text.slice(stop, j).includes(pattern))
+    return ~0
   while (j-- > stop) {
     const c = text.charCodeAt(j)
     const eq = table[c] ?? alphabet[c] | 0
