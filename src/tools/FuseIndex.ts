@@ -74,9 +74,18 @@ export default class FuseIndex<T = any> {
         }
       }
     } else {
-      // List is Array<Object>
+      // List is Array<Object>. Each record's `$` starts as a copy of a
+      // template holding every key index: copying an object literal's
+      // elements is several times cheaper than growing an empty `{}` on its
+      // first indexed store. Keys without a value are deleted again.
+      const template: Record<number, undefined> = {}
+      for (let k = 0; k < this.keys.length; k++) template[k] = undefined
       for (let i = 0; i < len; i++) {
-        this.records[recordCount++] = this._createObjectRecord(this.docs[i], i)
+        this.records[recordCount++] = this._createObjectRecord(
+          this.docs[i],
+          i,
+          { ...template }
+        )
       }
     }
 
@@ -182,9 +191,11 @@ export default class FuseIndex<T = any> {
       n: this.norm.get(doc)
     }
   }
-  _createObjectRecord(doc: any, docIndex: number): IndexRecord {
-    const record: IndexRecord = { i: docIndex, $: {} }
-
+  _createObjectRecord(
+    doc: any,
+    docIndex: number,
+    $: Record<number, SubRecord | SubRecord[] | undefined> = {}
+  ): IndexRecord {
     // Iterate over every key (i.e, path), and fetch the value at that key
     for (
       let keyIndex = 0, keyLen = this.keys.length;
@@ -193,10 +204,6 @@ export default class FuseIndex<T = any> {
     ) {
       const key = this.keys[keyIndex]
       const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path)
-
-      if (!isDefined(value)) {
-        continue
-      }
 
       if (isArray(value)) {
         const subRecords: SubRecord[] = []
@@ -219,18 +226,15 @@ export default class FuseIndex<T = any> {
             subRecords.push({ v: text, i: idx, n: this.norm.get(text) })
           }
         }
-        record.$![keyIndex] = subRecords
+        $[keyIndex] = subRecords
       } else if (isString(value) && !isBlank(value)) {
-        const subRecord: SubRecord = {
-          v: value,
-          n: this.norm.get(value)
-        }
-
-        record.$![keyIndex] = subRecord
+        $[keyIndex] = { v: value, n: this.norm.get(value) }
+      } else {
+        delete $[keyIndex]
       }
     }
 
-    return record
+    return { i: docIndex, $ } as IndexRecord
   }
   toJSON(): {
     keys: ReadonlyArray<Omit<KeyObject, 'getFn'>>

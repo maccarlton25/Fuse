@@ -255,7 +255,11 @@ var FuseIndex = class {
 			const record = this._createStringRecord(this.docs[i], i);
 			if (record) this.records[recordCount++] = record;
 		}
-		else for (let i = 0; i < len; i++) this.records[recordCount++] = this._createObjectRecord(this.docs[i], i);
+		else {
+			const template = {};
+			for (let k = 0; k < this.keys.length; k++) template[k] = void 0;
+			for (let i = 0; i < len; i++) this.records[recordCount++] = this._createObjectRecord(this.docs[i], i, { ...template });
+		}
 		this.records.length = recordCount;
 		this.norm.clear();
 	}
@@ -308,15 +312,10 @@ var FuseIndex = class {
 			n: this.norm.get(doc)
 		};
 	}
-	_createObjectRecord(doc, docIndex) {
-		const record = {
-			i: docIndex,
-			$: {}
-		};
+	_createObjectRecord(doc, docIndex, $ = {}) {
 		for (let keyIndex = 0, keyLen = this.keys.length; keyIndex < keyLen; keyIndex++) {
 			const key = this.keys[keyIndex];
 			const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path);
-			if (!isDefined(value)) continue;
 			if (isArray(value)) {
 				const subRecords = [];
 				for (let i = 0, len = value.length; i < len; i += 1) {
@@ -331,16 +330,17 @@ var FuseIndex = class {
 						n: this.norm.get(text)
 					});
 				}
-				record.$[keyIndex] = subRecords;
-			} else if (isString(value) && !isBlank(value)) {
-				const subRecord = {
-					v: value,
-					n: this.norm.get(value)
-				};
-				record.$[keyIndex] = subRecord;
-			}
+				$[keyIndex] = subRecords;
+			} else if (isString(value) && !isBlank(value)) $[keyIndex] = {
+				v: value,
+				n: this.norm.get(value)
+			};
+			else delete $[keyIndex];
 		}
-		return record;
+		return {
+			i: docIndex,
+			$
+		};
 	}
 	toJSON() {
 		return {

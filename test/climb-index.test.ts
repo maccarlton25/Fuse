@@ -322,3 +322,51 @@ describe('errors thrown while indexing match the baseline', () => {
     expect(thrown(Fuse, docs)).toBe(thrown(BaselineFuse, docs))
   })
 })
+
+describe('object records match the baseline key for key', () => {
+  const shape = (f: any) =>
+    JSON.stringify(
+      f
+        .getIndex()
+        .records.map((r: any) => [
+          Object.keys(r),
+          Object.keys(r.$),
+          Object.values(r.$),
+          r
+        ])
+    )
+  const docs: any[] = [
+    { a: 'x y', b: ['p', '', ' ', null, 'q'], c: { d: 'z' } },
+    { a: '', b: [], c: null },
+    { a: '   ', b: 'solo', c: { d: 5 } },
+    { a: 7, b: [1, true, 2n, -0], c: { d: [{ e: 1 }] } },
+    { b: [['n', ['m']], { v: 'w' }] },
+    {},
+    { a: null, b: undefined, c: { d: '\t' } },
+    { a: 'last', b: ['r'], c: { d: 'dd' } }
+  ]
+  const keySets: any[] = [
+    ['a', 'b', 'c.d'],
+    ['a'],
+    [{ name: 'a', getFn: (d: any) => d.a ?? 42 }, 'b'],
+    [{ name: 'b', getFn: (d: any) => d.b ?? ' ' }, { name: 'z', getFn: () => [''] }]
+  ]
+  test.each(keySets.map((k) => [k]))('keys %#', (keys) => {
+    for (const getFn of [undefined, (d: any, p: any) => (p[0] === 'a' ? d.a : ['g'])]) {
+      const opts: any = getFn ? { keys, getFn } : { keys }
+      const a = new Fuse(docs.slice(0, 6), opts)
+      const b = new BaselineFuse(docs.slice(0, 6), opts)
+      for (const d of docs.slice(6)) {
+        a.add(d)
+        b.add(d)
+      }
+      expect(shape(a)).toBe(shape(b))
+      a.removeAt(1)
+      b.removeAt(1)
+      expect(shape(a)).toBe(shape(b))
+      const pa = Fuse.parseIndex(a.getIndex().toJSON())
+      const pb = BaselineFuse.parseIndex(b.getIndex().toJSON())
+      expect(JSON.stringify(pa.toJSON())).toBe(JSON.stringify(pb.toJSON()))
+    }
+  })
+})
