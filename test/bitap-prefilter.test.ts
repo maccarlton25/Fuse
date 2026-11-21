@@ -249,3 +249,53 @@ describe('bitap reject filter: location window on long texts', () => {
     }
   })
 })
+
+// Fractional `location` where the baseline returns (it throws only when it
+// sizes an array from a fractional window end): the kernel's char-mask fill
+// once started at a fractional `low`, leaving every mask unwritten.
+describe('bitap kernel: fractional location', () => {
+  test('agrees with the baseline wherever the baseline returns', () => {
+    const p =
+      'qzwvtwtbuuzbuqzvvttutuzvtvzvzvvrwrrqqrbtvvuwutbtuarbuvwzuzwatwtqwwvvqrbqbubaubwbbabwarqvvazzrqvzuzvt'
+    const cases: [string, string, any][] = [
+      [
+        p,
+        p + 'bzvarvqtaqawvzwqzzqr',
+        { location: 2.5, findAllMatches: true, minMatchCharLength: 2 }
+      ]
+    ]
+    for (let n = 0; n < 3000; n++) {
+      const pattern = randStr(pick([1, 2, 5, 12, 31, 32, 33, 40, 64, 70]))
+      const len = int(300)
+      const at = int(len + 1)
+      const t = randStr(len)
+      cases.push([
+        pattern,
+        t.slice(0, at) + mutate(pattern, int(3)) + t.slice(at),
+        {
+          location: pick([0.5, 2.5, 7.25, len / 3, len - 0.5, 1e-9]),
+          distance: pick([0, 1, 100, 1000, 1e6]),
+          threshold: pick([0, 0.3, 0.6, 0.9]),
+          findAllMatches: rng() < 0.6,
+          includeMatches: rng() < 0.4,
+          minMatchCharLength: pick([1, 2]),
+          isCaseSensitive: rng() < 0.5
+        }
+      ])
+    }
+    let compared = 0
+    for (const [pattern, text, options] of cases) {
+      let expected: string
+      try {
+        expected = JSON.stringify(BaselineFuse.match(pattern, text, options))
+      } catch {
+        continue
+      }
+      compared++
+      expect(
+        JSON.stringify(new BitapSearch(pattern, options).searchIn(text))
+      ).toBe(expected)
+    }
+    expect(compared).toBeGreaterThan(500)
+  }, 600000)
+})

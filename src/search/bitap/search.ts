@@ -142,7 +142,7 @@ export default function search(
       // 2 * expectedLocation - bestLocation with bestLocation < finish, so no
       // level scans below `low`. Resolve the alphabet mask of every position
       // in [low, finish] once (text[k] is undefined, so 0, past the end).
-      low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1))
+      low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1)) | 0
       if (bitArr.length < finish + 2) {
         bitArr = bufA = new Int32Array(finish * 2 + 4)
         lastBitArr = bufB = new Int32Array(finish * 2 + 4)

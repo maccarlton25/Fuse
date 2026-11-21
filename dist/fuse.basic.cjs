@@ -443,7 +443,7 @@ function search(text, { pattern, alphabet: patternAlphabet, table }, location, {
 		let start = Math.max(1, expectedLocation - binMid + 1);
 		const finish = findAllMatches ? textLen : Math.min(expectedLocation + binMid, textLen) + patternLen;
 		if (!i) {
-			low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1));
+			low = Math.max(1, Math.min(start, 2 * expectedLocation - finish + 1)) | 0;
 			if (bitArr.length < finish + 2) {
 				bitArr = bufA = new Int32Array(finish * 2 + 4);
 				lastBitArr = bufB = new Int32Array(finish * 2 + 4);
