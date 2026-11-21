@@ -1475,20 +1475,17 @@ var Fuse = class {
 		const comparator = sortFn;
 		const stable = (a, b) => comparator(a, b) || a.idx - b.idx;
 		let results;
-		if (useHeap) {
-			const heap = new MaxHeap(limit, stable);
-			if (isString(this._docs[0])) this._searchStringList(query, {
-				heap,
+		if (isString(query)) {
+			const opts = {
+				heap: useHeap ? new MaxHeap(limit, stable) : void 0,
 				ignoreFieldNorm
-			});
-			else this._searchObjectList(query, {
-				heap,
-				ignoreFieldNorm
-			});
-			results = heap.extractSorted();
+			};
+			results = isString(this._docs[0]) ? this._searchStringList(query, opts) : this._searchObjectList(query, opts);
 		} else {
-			results = isString(query) ? isString(this._docs[0]) ? this._searchStringList(query) : this._searchObjectList(query) : this._searchLogical(query);
+			results = this._searchLogical(query);
 			computeScore(results, { ignoreFieldNorm });
+		}
+		if (!useHeap) {
 			if (shouldSort) results.sort(isString(query) ? stable : comparator);
 			if (isNumber(limit) && limit > -1) results = results.slice(0, limit);
 		}
@@ -1502,7 +1499,7 @@ var Fuse = class {
 		const searcher = this._getSearcher(query);
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
 		const records = this._myIndex.records;
-		const results = heap ? null : [];
+		const results = [];
 		for (const record of records) {
 			if (!record) continue;
 			const text = record.v;
@@ -1527,14 +1524,12 @@ var Fuse = class {
 						idx: record.i,
 						matches
 					};
-					if (heap) {
-						result.score = computeScoreSingle(matches, opts);
-						heap.insert(result);
-					} else results.push(result);
+					result.score = computeScoreSingle(matches, opts);
+					heap ? heap.insert(result) : results.push(result);
 				}
 			}
 		}
-		return results;
+		return heap ? heap.extractSorted() : results;
 	}
 	_searchLogical(query) {
 		const expression = parse(query, this.options);
@@ -1601,7 +1596,7 @@ var Fuse = class {
 		const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
 		const records = this._myIndex.records;
 		const keys = this._normalizedKeys();
-		const results = heap ? null : [];
+		const results = [];
 		let matches = [];
 		for (const record of records) {
 			if (!record) continue;
@@ -1622,14 +1617,12 @@ var Fuse = class {
 					item,
 					matches
 				};
-				if (heap) {
-					result.score = computeScoreSingle(matches, opts);
-					heap.insert(result);
-				} else results.push(result);
+				result.score = computeScoreSingle(matches, opts);
+				heap ? heap.insert(result) : results.push(result);
 				matches = [];
 			} else matches.length = 0;
 		}
-		return results;
+		return heap ? heap.extractSorted() : results;
 	}
 	_findMatches({ key, value, searcher }) {
 		const matches = [];
@@ -1637,7 +1630,7 @@ var Fuse = class {
 		return matches;
 	}
 	_coversAllTokens(matches) {
-		const termCount = matches.length ? matches[0].termCount : void 0;
+		const termCount = matches[0].termCount;
 		if (termCount === void 0) return true;
 		if (termCount <= 31) {
 			let coverage = 0;
