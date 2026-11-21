@@ -26,9 +26,15 @@ const pickOptions = (options: any): ExtendedSearchOptions => ({
 // normalizes a whole query string (case-fold then strip diacritics). The object
 // compiler applies this per operator value so object and string forms feed
 // identically-normalized patterns to the matchers.
-export function normalizeValue(value: string, options: any): string {
-  value = options.isCaseSensitive ? value : value.toLowerCase()
-  return options.ignoreDiacritics ? stripDiacritics(value) : value
+//
+// The parameter is named `pattern` on purpose: for a non-string query the
+// engine's TypeError names it (`pattern.toLowerCase is not a function`), and
+// the non-minified builds must throw the baseline's message. The object
+// compiler only passes values it has already checked with `isString`, so it
+// never reaches the throw and the name is unobservable there.
+export function normalizeValue(pattern: string, options: any): string {
+  pattern = options.isCaseSensitive ? pattern : pattern.toLowerCase()
+  return options.ignoreDiacritics ? stripDiacritics(pattern) : pattern
 }
 
 export default class ExtendedSearch {

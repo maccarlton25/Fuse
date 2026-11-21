@@ -862,9 +862,9 @@ const pickOptions = (options) => ({
 	ignoreDiacritics: options.ignoreDiacritics,
 	includeMatches: options.includeMatches
 });
-function normalizeValue(value, options) {
-	value = options.isCaseSensitive ? value : value.toLowerCase();
-	return options.ignoreDiacritics ? stripDiacritics(value) : value;
+function normalizeValue(pattern, options) {
+	pattern = options.isCaseSensitive ? pattern : pattern.toLowerCase();
+	return options.ignoreDiacritics ? stripDiacritics(pattern) : pattern;
 }
 var ExtendedSearch = class ExtendedSearch {
 	constructor(pattern, options = {}) {
