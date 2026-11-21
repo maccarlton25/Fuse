@@ -34,6 +34,13 @@ export function isInverse(type: string): boolean {
   return type.startsWith('inverse')
 }
 
+// The BitapSearch options the fuzzy matcher resolves against Config (with
+// `??`, so a null option also takes the default).
+const FUZZY_OPTION_KEYS =
+  'location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation'.split(
+    ' '
+  )
+
 // ── Matcher definitions ───────────────────────────────────────────
 //
 // Order matters — parseQuery tries each in sequence and uses the
@@ -188,17 +195,11 @@ const matchers: MatcherDef[] = [
     multiRegex: /^"(.*)"$/,
     singleRegex: /^(.*)$/,
     create: (pattern, options = {}) => {
-      const bitap = new BitapSearch(pattern, {
-        location: options.location ?? Config.location,
-        threshold: options.threshold ?? Config.threshold,
-        distance: options.distance ?? Config.distance,
-        includeMatches: options.includeMatches ?? Config.includeMatches,
-        findAllMatches: options.findAllMatches ?? Config.findAllMatches,
-        minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
-        isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
-        ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
-        ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation
-      })
+      const resolved: any = {}
+      for (const key of FUZZY_OPTION_KEYS) {
+        resolved[key] = options[key] ?? (Config as any)[key]
+      }
+      const bitap = new BitapSearch(pattern, resolved)
 
       return {
         type: 'fuzzy',

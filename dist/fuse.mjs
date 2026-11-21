@@ -632,6 +632,7 @@ const MULTI_MATCH_TYPES = /* @__PURE__ */ new Set(["fuzzy", "include"]);
 function isInverse(type) {
 	return type.startsWith("inverse");
 }
+const FUZZY_OPTION_KEYS = "location threshold distance includeMatches findAllMatches minMatchCharLength isCaseSensitive ignoreDiacritics ignoreLocation".split(" ");
 const matchers = [
 	{
 		type: "exact",
@@ -763,17 +764,9 @@ const matchers = [
 		multiRegex: /^"(.*)"$/,
 		singleRegex: /^(.*)$/,
 		create: (pattern, options = {}) => {
-			const bitap = new BitapSearch(pattern, {
-				location: options.location ?? Config.location,
-				threshold: options.threshold ?? Config.threshold,
-				distance: options.distance ?? Config.distance,
-				includeMatches: options.includeMatches ?? Config.includeMatches,
-				findAllMatches: options.findAllMatches ?? Config.findAllMatches,
-				minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
-				isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
-				ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
-				ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation
-			});
+			const resolved = {};
+			for (const key of FUZZY_OPTION_KEYS) resolved[key] = options[key] ?? Config[key];
+			const bitap = new BitapSearch(pattern, resolved);
 			return {
 				type: "fuzzy",
 				search(text) {
@@ -886,34 +879,24 @@ function parseQuery(pattern, options = {}) {
 
 //#endregion
 //#region src/search/extended/index.ts
-function resolveOptions(options = {}) {
-	return {
-		isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
-		ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
-		includeMatches: options.includeMatches ?? Config.includeMatches,
-		minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
-		findAllMatches: options.findAllMatches ?? Config.findAllMatches,
-		ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation,
-		location: options.location ?? Config.location,
-		threshold: options.threshold ?? Config.threshold,
-		distance: options.distance ?? Config.distance
-	};
-}
+const pickOptions = (options) => ({
+	isCaseSensitive: options.isCaseSensitive,
+	ignoreDiacritics: options.ignoreDiacritics,
+	includeMatches: options.includeMatches
+});
 function normalizeValue(value, options) {
-	value = options.isCaseSensitive ?? Config.isCaseSensitive ? value : value.toLowerCase();
-	return options.ignoreDiacritics ?? Config.ignoreDiacritics ? stripDiacritics(value) : value;
+	value = options.isCaseSensitive ? value : value.toLowerCase();
+	return options.ignoreDiacritics ? stripDiacritics(value) : value;
 }
 var ExtendedSearch = class ExtendedSearch {
 	constructor(pattern, options = {}) {
-		this.options = resolveOptions(options);
-		pattern = this.options.isCaseSensitive ? pattern : pattern.toLowerCase();
-		pattern = this.options.ignoreDiacritics ? stripDiacritics(pattern) : pattern;
-		this.pattern = pattern;
-		this.query = parseQuery(this.pattern, this.options);
+		this.options = pickOptions(options);
+		this.pattern = normalizeValue(pattern, options);
+		this.query = parseQuery(this.pattern, options);
 	}
 	static fromMatchers(query, options = {}) {
 		const search = Object.create(ExtendedSearch.prototype);
-		search.options = resolveOptions(options);
+		search.options = pickOptions(options);
 		search.pattern = "";
 		search.query = query;
 		return search;
