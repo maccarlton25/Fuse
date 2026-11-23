@@ -319,4 +319,15 @@ describe('Searcher cache', () => {
     const r2 = fuse.search('watermelon')
     expect(r2.length).toBeGreaterThan(r1.length)
   })
+
+  test('MaxHeap hole-sift matches full sort + slice across duplicate scores and limits', () => {
+    const items = Array.from({ length: 120 }, (_, i) => ({
+      title: i % 3 === 0 ? 'apple pie' : i % 3 === 1 ? 'apple tart' : 'pear'
+    }))
+    const fuse = new Fuse(items, { keys: ['title'], includeScore: true })
+    const full = fuse.search('apple')
+    for (const limit of [1, 2, 5, 10, 25]) {
+      expect(fuse.search('apple', { limit })).toEqual(full.slice(0, limit))
+    }
+  })
 })

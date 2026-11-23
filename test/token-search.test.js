@@ -374,4 +374,34 @@ describe('Token search — edge cases', () => {
     expect(result[0].score).toBeGreaterThanOrEqual(0)
     expect(result[0].score).toBeLessThanOrEqual(1)
   })
+
+  test('Single-pass field normalization preserves multi-term diacritics, Hangul, and custom tokenize', () => {
+    const docs = [
+      { title: 'Café Crème Brûlée & Łódź', notes: '서울특별시 검색' },
+      { title: 'Plain Toast', notes: 'Other' }
+    ]
+    for (const matchAlgorithm of ['myers', 'bitap']) {
+      const fuse = new Fuse(docs, {
+        useTokenSearch: true,
+        ignoreDiacritics: true,
+        includeScore: true,
+        includeMatches: true,
+        matchAlgorithm,
+        keys: ['title', 'notes']
+      })
+      const r1 = fuse.search('cafe creme lodz')
+      expect(r1[0].item.title).toBe('Café Crème Brûlée & Łódź')
+      expect(r1[0].matches.length).toBeGreaterThan(0)
+
+      const r2 = fuse.search('서울특별시 검색')
+      expect(r2[0].item.notes).toBe('서울특별시 검색')
+    }
+
+    const custom = new Fuse([{ text: 'Alpha-Beta' }], {
+      keys: ['text'],
+      useTokenSearch: true,
+      tokenize: (s) => s.split('-')
+    })
+    expect(custom.search('ALPHA-BETA')).toHaveLength(1)
+  })
 })
